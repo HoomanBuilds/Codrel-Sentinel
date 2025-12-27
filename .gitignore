@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+coverage/
+.idea/
+.vscode/
+*.swp
+*.swo
+docs/confluent.guide.md
+docs/datadog.guide.md
+docs/dev.setup.md
+docs/elevenlab.guide.md
+infra/datadog-dashboard.json
+infra/datadog-monitors.json

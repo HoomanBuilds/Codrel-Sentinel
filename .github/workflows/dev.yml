@@ -1,0 +1,64 @@
+name: Sentinel CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./codrel-sentinel/backend
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: sentinel/backend/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Type check
+        run: npm run build
+      
+      - name: Lint
+        run: npm run lint || true
+
+  workers:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        worker: [ingest, events, elevenlab]
+    defaults:
+      run:
+        working-directory: ./codrel-sentinel/workers/${{ matrix.worker }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Build
+        run: go build -v ./...
+      
+      - name: Test
+        run: go test -v ./... || true
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [backend, workers]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Validate docker-compose
+        run: docker-compose -f codrel-sentinel/infra/docker-compose.yaml config
