@@ -35,7 +35,7 @@ type AnalysisEnvelope struct {
 
 	WorkflowCrash *model.WorkflowCrashPayload `json:"workflow_crash"`
 	Bug           *model.BugPayload           `json:"bug"`
-	// Rule          *model.RuleIngestionPayload `json:"rule"`
+	Rule          *model.ArchPayload `json:"rule"`
 
 	RevertedPRs []model.RevertedPRPayload `json:"reverted_prs"`
 	RejectedPRs []model.RejectedPRPayload `json:"rejected_prs"`
@@ -139,100 +139,131 @@ func processMessage(
 
 	client := github.NewClient(req.AccessToken)
 
-	envelope := AnalysisEnvelope{
-		Repo: req.Repo,
-	}
+	log.Println("processing repo:", req.Repo)
 
-	var stages sync.WaitGroup
-	var mu sync.Mutex
-	
-	stages.Add(2)
-
-	go func() {
-		defer stages.Done()
-		envelope.WorkflowCrash = ProcessWorkflowCrash(req, req.AccessToken, parts[0], parts[1])
-	}()
-
-	go func() {
-		defer stages.Done()
-		mu.Lock()
-		envelope.Bug = ProcessBug(req , req.AccessToken , parts[0] , parts[1])
-		mu.Unlock()
-	}()
-
-	// go func() {
-	// 	defer stages.Done()
-	// 	envelope.Rule = ProcessRuleIngestion(req)
-	// }()
-
-	if err := githubLimiter.Wait(ctx); err != nil {
-		log.Println("rate limiter cancelled")
+	switch req.Type {
+	case "sync":
+		log.Printf("[sync] received sync request for %s - skipping for now", req.Repo)
 		return
-	}
+	case "connection" :
+		webhookURL := os.Getenv("BACKEND_WEBHOOK_URL")
+		webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
+		log.Printf(":setting webhook %s for repo %s", webhookURL , req.Repo)
 
-	prBuckets, err := github.FetchClosedPRBuckets(
-		client,
-		parts[0],
-		parts[1],
-	)
-	if err != nil {
-		log.Println("github fetch failed:", err)
-		return
-	}
+		if webhookURL != "" {
+			err := github.SetupRepoWebhook(client, req.AccessToken, req.Repo, webhookURL, webhookSecret)
+			
+			if err != nil {
+				log.Printf("[setup] webhook failed (critical): %v", err)
+			}
+		}
 
-	reverted := prBuckets.Reverted
-	rejected := prBuckets.Rejected
+		envelope := AnalysisEnvelope{
+			Repo: req.Repo,
+		}
 
-	var buildWG sync.WaitGroup
-	buildWG.Add(2)
+		var stages sync.WaitGroup
+		var mu sync.Mutex
+		
+		stages.Add(3)
 
-	go func() {
-		defer buildWG.Done()
-		if len(reverted) == 0 {
+		go func() {
+			defer stages.Done()
+			envelope.WorkflowCrash = ProcessWorkflowCrash(req, req.AccessToken, parts[0], parts[1])
+		}()
+
+		go func() {
+			defer stages.Done()
+			mu.Lock()
+			envelope.Bug = ProcessBug(req , req.AccessToken , parts[0] , parts[1])
+			mu.Unlock()
+		}()
+
+		go func() {
+			defer stages.Done()
+			files, err := github.FetchRepoArchitecture(client, parts[0], parts[1])
+			if err != nil {
+				log.Println("fetch repo architecture failed:", err)
+				return
+			}
+			mu.Lock()
+			envelope.Rule = &model.ArchPayload{
+				Files: files,
+			}
+			mu.Unlock()
+		}()
+
+		if err := githubLimiter.Wait(ctx); err != nil {
+			log.Println("rate limiter cancelled")
 			return
 		}
 
-		res := make([]model.RevertedPRPayload, 0, len(reverted))
-		for _, pr := range reverted {
-			res = append(res,
-				model.RevertedPRPayload{
-					Repo:     req.Repo,
-					PR:       pr,
-					Diff:     pr.Diff,
-					Comments: pr.Body,
-				},
-			)
-		}
-		mu.Lock()	
-		envelope.RevertedPRs = res
-		mu.Unlock()
-	}()
-
-	go func() {
-		defer buildWG.Done()
-		if len(rejected) == 0 {
+		prBuckets, err := github.FetchClosedPRBuckets(
+			client,
+			parts[0],
+			parts[1],
+		)
+		if err != nil {
+			log.Println("github fetch failed:", err)
 			return
 		}
 
-		res := make([]model.RejectedPRPayload, 0, len(rejected))
-		for _, pr := range rejected {
-			res = append(res,
-				model.RejectedPRPayload{
-					Repo: req.Repo,
-					PR:   pr,
-				},
-			)
-		}
-		mu.Lock()
-		envelope.RejectedPRs = res
-		mu.Unlock()
-	}()
+		reverted := prBuckets.Reverted
+		rejected := prBuckets.Rejected
 
-	buildWG.Wait()
+		var buildWG sync.WaitGroup
+		buildWG.Add(2)
 
-	stages.Wait()
+		go func() {
+			defer buildWG.Done()
+			if len(reverted) == 0 {
+				return
+			}
 
-	emitEnvelope(producer, envelope)
+			res := make([]model.RevertedPRPayload, 0, len(reverted))
+			for _, pr := range reverted {
+				res = append(res,
+					model.RevertedPRPayload{
+						Repo:     req.Repo,
+						PR:       pr,
+						Diff:     pr.Diff,
+						Comments: pr.Body,
+					},
+				)
+			}
+			mu.Lock()	
+			envelope.RevertedPRs = res
+			mu.Unlock()
+		}()
+
+		go func() {
+			defer buildWG.Done()
+			if len(rejected) == 0 {
+				return
+			}
+
+			res := make([]model.RejectedPRPayload, 0, len(rejected))
+			for _, pr := range rejected {
+				res = append(res,
+					model.RejectedPRPayload{
+						Repo: req.Repo,
+						PR:   pr,
+					},
+				)
+			}
+			mu.Lock()
+			envelope.RejectedPRs = res
+			mu.Unlock()
+		}()
+
+		buildWG.Wait()
+
+		stages.Wait()
+
+		emitEnvelope(producer, envelope)
+		default:
+		log.Printf("unknown request type: %s", req.Type)
+	}
 }
 
 func emitEnvelope(
@@ -302,10 +333,21 @@ func ProcessBug(req *model.IngestRequest , token string , owner string , repo st
 	}
 }
 
-// func ProcessRuleIngestion(
-// 	req *model.IngestRequest,
-// ) *model.RuleIngestionPayload {
-// 	log.Println("ProcessRuleIngestion:", req.Repo)
-// 	return &model.RuleIngestionPayload{Repo: req.Repo}
-// }
+func ProcessArchitecture(
+    req *model.IngestRequest, 
+    token string, 
+    owner string, 
+    repo string,
+) *model.ArchPayload {
+    log.Println("ProcessArchitecture:", req.Repo)
 
+    files, err := github.FetchRepoArchitecture(github.NewClient(token), owner, repo)
+    if err != nil {
+        log.Println("arch fetch failed:", err)
+        return &model.ArchPayload{}
+    }
+
+    return &model.ArchPayload{
+        Files: files,
+    }
+}

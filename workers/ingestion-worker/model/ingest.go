@@ -7,6 +7,7 @@ import (
 type IngestRequest struct {
 	Repo        string `json:"repo"`
 	AccessToken string `json:"access_token"`
+	Type        string `json:"type"`
 }
 
 type RevertedPRPayload struct {
@@ -27,4 +28,8 @@ type BugPayload struct {
 
 type WorkflowCrashPayload struct {
 	Crash []github.MinimalWorkflowFailure
+}
+
+type ArchPayload struct {
+	Files []github.ArchFile
 }

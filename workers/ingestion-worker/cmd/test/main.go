@@ -45,25 +45,21 @@ func main() {
 	// ==========================================================
 	// 1. PR BUCKETS (REVERTED/REJECTED) - COMMENTED OUT
 	// ==========================================================
-	/*
-		p, err := github.FetchClosedPRBuckets(client, owner, repoName)
-		if err != nil {
-			log.Fatal(err)
-		}
+	p, err := github.FetchClosedPRBuckets(client, owner, repoName)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-		log.Printf("[ingest] DONE. reverted PRs=%d , rejected PRs=%d", len(p.Reverted), len(p.Rejected))
-	*/
+	log.Printf("[ingest] DONE. reverted PRs=%d , rejected PRs=%d", len(p.Reverted), len(p.Rejected))
 
 	// ==========================================================
 	// 2. KNOWN BUGS INGESTION
 	// ==========================================================
-	/*
-		bugs, err := github.FetchClosedBugs(client, owner, repoName)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("[ingest] DONE. Found qualified bugs =%d", len(bugs))
-	*/
+	bugs, err := github.FetchClosedIssuesRaw(token, owner, repoName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("[ingest] DONE. Found qualified bugs =%d", len(bugs))
 
 	// ==========================================================
 	// 3. WORKFLOW CRASH INGESTION
@@ -73,5 +69,30 @@ func main() {
 		log.Printf("[ingest] error fetching workflow crashes: %v", err)
 	} else {
 		log.Printf("[ingest] DONE. Workflow crashes found=%d (saved to crashes.json)", len(crashes))
+	}
+
+	// ==========================================================
+	// 4. REPO ARCHITECTURE SCAN
+	// ==========================================================
+	archFiles, err := github.FetchRepoArchitecture(client, owner, repoName)
+	if err != nil {
+		log.Printf("[ingest] error scanning architecture: %v", err)
+	} else {
+		log.Printf("[ingest] DONE. Architecture files indexed=%d", len(archFiles))
+	}
+
+	// ==========================================================
+	// 0. WEBHOOK REGISTRATION (Real-time monitoring)
+	// ==========================================================
+	backendURL := os.Getenv("BACKEND_WEBHOOK_URL")
+	webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
+
+	if backendURL != "" {
+		err := github.SetupRepoWebhook(client, owner, repoName, backendURL, webhookSecret)
+		if err != nil {
+			log.Printf("[setup] webhook error: %v", err)
+		} else {
+			log.Println("[setup] real-time monitoring active")
+		}
 	}
 }
