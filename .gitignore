@@ -13,4 +13,6 @@ docs/datadog.guide.md
 docs/dev.setup.md
 docs/elevenlab.guide.md
 infra/datadog-dashboard.json
+
+*.pem
 infra/datadog-monitors.json

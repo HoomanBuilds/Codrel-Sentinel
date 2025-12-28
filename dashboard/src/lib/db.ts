@@ -10,7 +10,8 @@ if (!fs.existsSync(DB_PATH)) {
 export const jsonDb = {
   read: () => {
     try {
-      return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'));
+      const data = fs.readFileSync(DB_PATH, 'utf-8');
+      return JSON.parse(data);
     } catch (e) {
       return { connectedRepos: [] };
     }
@@ -22,17 +23,21 @@ export const jsonDb = {
   
   addConnectedRepo: (repo: any) => {
     const data = jsonDb.read();
-    if (!data.connectedRepos.find((r: any) => r.id === repo.id)) {
+    const index = data.connectedRepos.findIndex((r: any) => r.id === repo.id);
+    
+    if (index >= 0) {
+      data.connectedRepos[index] = { ...data.connectedRepos[index], ...repo };
+    } else {
       data.connectedRepos.push({
         ...repo,
-        connectedAt: new Date().toISOString(),
-        status: 'PROCESSING' 
+        status: 'PROCESSING',
+        connectedAt: new Date().toISOString()
       });
-      jsonDb.write(data);
     }
+    jsonDb.write(data);
   },
   
   getConnectedRepos: () => {
-    return jsonDb.read().connectedRepos;
+    return jsonDb.read().connectedRepos || [];
   }
 };

@@ -1,60 +1,73 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Kafka, Partitioners } from "kafkajs";
+import { Kafka, Partitioners, logLevel } from "kafkajs";
 import { jsonDb } from "@/lib/db";
 import { v4 as uuid } from "uuid";
+import { getServerSession } from "next-auth"; 
+import { authOptions } from "@/lib/auth";
+
+const kafkaBroker = process.env.KAFKA_BROKER || "localhost:9092";
 
 const kafka = new Kafka({
   clientId: "sentinel-dashboard",
-  brokers: [process.env.KAFKA_BROKER || "localhost:9092"],
+  brokers: [kafkaBroker],
+  // We keep retries low so it fails fast, but we DO NOT silence errors anymore
+  retry: {
+    retries: 0 
+  }
 });
+
 const producer = kafka.producer({ createPartitioner: Partitioners.LegacyPartitioner });
 
 export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  const userIdentifier = session?.user?.email || (session?.user as any)?.login;
+
+  if (!session || !session.user || !userIdentifier) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await req.json();
-    const { repoId, repoName, owner, installationId, htmlUrl } = body;
+    const { repoId, name: repoName, owner, installationId } = body;
 
-    if (!repoId || !installationId) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    const jobId = uuid();
+    
+    try {
+      await producer.connect();
+      await producer.send({
+        topic: "repo-connect",
+        messages: [{ value: JSON.stringify({
+          jobId, githubId: repoId, owner, repoName, 
+          installationId: Number(installationId), 
+          userEmail: userIdentifier, type: "full_ingestion", timestamp: Date.now()
+        }) }],
+      });
+      await producer.disconnect();
+      console.log(`✅ [Ingestion] Job sent to Kafka: ${repoName}`);
+    } catch (kafkaError: any) {
+      console.error("❌ Kafka Offline. Aborting.");
+      return NextResponse.json({ 
+        error: "Ingestion Service Unavailable (Kafka Down)" 
+      }, { status: 503 });
     }
 
-    console.log(`🔌 Connecting Repo: ${owner}/${repoName}`);
     jsonDb.addConnectedRepo({
       id: repoId,
       name: repoName,
       owner,
-      htmlUrl,
-      installationId
+      installationId,
+      connectedBy: userIdentifier,
+      status: "INGESTING",
+      jobId
     });
-
-    await producer.connect();
-    
-    const jobId = uuid();
-    const payload = {
-      jobId,
-      githubId: repoId,
-      owner,
-      repoName,
-      installationId: Number(installationId),
-      type: "full_ingestion",
-      timestamp: Date.now()
-    };
-
-    await producer.send({
-      topic: "repo-connect",
-      messages: [{ value: JSON.stringify(payload) }],
-    });
-
-    await producer.disconnect();
 
     return NextResponse.json({ 
       success: true, 
-      message: "Ingestion Started", 
-      jobId 
+      status: "ingesting", 
+      message: "Ingestion Started" 
     });
 
   } catch (error: any) {
-    console.error("Connect Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

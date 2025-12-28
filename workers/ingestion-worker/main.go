@@ -1,0 +1,293 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"os"
+	"os/signal"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"golang.org/x/time/rate"
+
+	ckafka "github.com/confluentinc/confluent-kafka-go/kafka"
+
+	"codrel-sentinel/workers/ingestion-worker/config"
+	"codrel-sentinel/workers/ingestion-worker/github"
+	"codrel-sentinel/workers/ingestion-worker/kafka"
+	"codrel-sentinel/workers/ingestion-worker/model"
+)
+
+const (
+	parallelism = 2
+	jobBuffer   = 100
+)
+
+var githubLimiter = rate.NewLimiter(2, 4)
+
+var outTopic = config.AnalysisStorageTopic
+
+type AnalysisEnvelope struct {
+	Repo string `json:"repo"`
+
+	// WorkflowCrash *model.WorkflowCrashPayload `json:"workflow_crash"`
+	Bug           *model.BugPayload           `json:"bug"`
+	// Rule          *model.RuleIngestionPayload `json:"rule"`
+
+	RevertedPRs []model.RevertedPRPayload `json:"reverted_prs"`
+	RejectedPRs []model.RejectedPRPayload `json:"rejected_prs"`
+}
+
+func main() {
+	consumer, err := kafka.NewConsumer()
+	if err != nil {
+		panic(err)
+	}
+	defer consumer.Close()
+
+	producer, err := kafka.NewProducer()
+	if err != nil {
+		panic(err)
+	}
+	defer producer.Close()
+
+	if err := consumer.Subscribe(config.RequestTopic, nil); err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	jobs := make(chan *ckafka.Message, jobBuffer)
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+
+	log.Println("ingestion worker started")
+
+	go func() {
+		defer close(jobs)
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("poll loop stopping")
+				return
+			default:
+				msg, err := consumer.ReadMessage(500 * time.Millisecond)
+				if err == nil {
+					jobs <- msg
+				}
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(parallelism)
+
+	for i := 0; i < parallelism; i++ {
+		go worker(ctx, &wg, jobs, producer)
+	}
+
+	<-sig
+	log.Println("shutdown signal received")
+	cancel()
+
+	wg.Wait()
+	log.Println("all workers stopped")
+}
+
+func worker(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	jobs <-chan *ckafka.Message,
+	producer *ckafka.Producer,
+) {
+	defer wg.Done()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-jobs:
+			if !ok {
+				return
+			}
+			processMessage(ctx, msg, producer)
+		}
+	}
+}
+
+func processMessage(
+	ctx context.Context,
+	msg *ckafka.Message,
+	producer *ckafka.Producer,
+) {
+	req, err := kafka.ReadIngestRequest(msg)
+	if err != nil {
+		log.Println("invalid request:", err)
+		return
+	}
+
+	parts := strings.Split(req.Repo, "/")
+	if len(parts) != 2 {
+		log.Println("invalid repo:", req.Repo)
+		return
+	}
+
+	client := github.NewClient(req.AccessToken)
+
+	envelope := AnalysisEnvelope{
+		Repo: req.Repo,
+	}
+
+	var stages sync.WaitGroup
+	var mu sync.Mutex
+	
+	// stages.Add(3)
+
+	// go func() {
+	// 	defer stages.Done()
+	// 	envelope.WorkflowCrash = ProcessWorkflowCrash(req)
+	// }()
+
+	go func() {
+		defer stages.Done()
+		mu.Lock()
+		envelope.Bug = ProcessBug(req , req.AccessToken , parts[0] , parts[1])
+		mu.Unlock()
+	}()
+
+	// go func() {
+	// 	defer stages.Done()
+	// 	envelope.Rule = ProcessRuleIngestion(req)
+	// }()
+
+	if err := githubLimiter.Wait(ctx); err != nil {
+		log.Println("rate limiter cancelled")
+		return
+	}
+
+	prBuckets, err := github.FetchClosedPRBuckets(
+		client,
+		parts[0],
+		parts[1],
+	)
+	if err != nil {
+		log.Println("github fetch failed:", err)
+		return
+	}
+
+	reverted := prBuckets.Reverted
+	rejected := prBuckets.Rejected
+
+	var buildWG sync.WaitGroup
+	buildWG.Add(2)
+
+	go func() {
+		defer buildWG.Done()
+		if len(reverted) == 0 {
+			return
+		}
+
+		res := make([]model.RevertedPRPayload, 0, len(reverted))
+		for _, pr := range reverted {
+			res = append(res,
+				model.RevertedPRPayload{
+					Repo:     req.Repo,
+					PR:       pr,
+					Diff:     pr.Diff,
+					Comments: pr.Body,
+				},
+			)
+		}
+		mu.Lock()	
+		envelope.RevertedPRs = res
+		mu.Unlock()
+	}()
+
+	go func() {
+		defer buildWG.Done()
+		if len(rejected) == 0 {
+			return
+		}
+
+		res := make([]model.RejectedPRPayload, 0, len(rejected))
+		for _, pr := range rejected {
+			res = append(res,
+				model.RejectedPRPayload{
+					Repo: req.Repo,
+					PR:   pr,
+				},
+			)
+		}
+		mu.Lock()
+		envelope.RejectedPRs = res
+		mu.Unlock()
+	}()
+
+	buildWG.Wait()
+
+	stages.Wait()
+
+	emitEnvelope(producer, envelope)
+}
+
+func emitEnvelope(
+	producer *ckafka.Producer,
+	envelope AnalysisEnvelope,
+) {
+	bytes, err := json.Marshal(envelope)
+	if err != nil {
+		log.Println("marshal failed:", err)
+		return
+	}
+
+	err = producer.Produce(&ckafka.Message{
+		TopicPartition: ckafka.TopicPartition{
+			Topic:     &outTopic,
+			Partition: ckafka.PartitionAny,
+		},
+		Key:   []byte("analysis_bundle"),
+		Value: bytes,
+	}, nil)
+
+	if err != nil {
+		log.Println("produce failed:", err)
+	}
+}
+
+// func ProcessWorkflowCrash(
+// 	req *model.IngestRequest,
+// ) *model.WorkflowCrashPayload {
+// 	log.Println("ProcessWorkflowCrash:", req.Repo)
+// 	return &model.WorkflowCrashPayload{Repo: req.Repo}
+// }
+
+func ProcessBug(req *model.IngestRequest , token string , owner string , repo string) *model.BugPayload {
+	log.Println("ProcessBug:", req.Repo)
+
+	issues, err := github.FetchClosedIssuesRaw(
+		token,
+		owner,
+		repo,
+	)
+	if err != nil {
+		log.Println("fetch failed:", err)
+		return &model.BugPayload{}
+	}
+
+	return &model.BugPayload{
+		Issues: issues,
+	}
+}
+
+// func ProcessRuleIngestion(
+// 	req *model.IngestRequest,
+// ) *model.RuleIngestionPayload {
+// 	log.Println("ProcessRuleIngestion:", req.Repo)
+// 	return &model.RuleIngestionPayload{Repo: req.Repo}
+// }
+
