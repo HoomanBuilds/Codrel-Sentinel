@@ -32,7 +32,7 @@ func LoadConfig() Config {
 	_ = godotenv.Load()
 
 	return Config{
-		Brokers:     os.Getenv("KAFKA_BOOTSTRAP_SERVERS"),
+		Brokers:     os.Getenv("KAFKA_BROKERS"),
 		GroupID:     os.Getenv("KAFKA_GROUP_ID"),
 		Topic:       os.Getenv("KAFKA_TOPIC"),
 		ElevenKey:   os.Getenv("ELEVENLABS_API_KEY"),
@@ -42,14 +42,19 @@ func LoadConfig() Config {
 }
 
 type Job struct {
-	ID string `json:"id"`
+	EventID  string `json:"eventId"`
+	Message  string `json:"message"`
+	Priority string `json:"priority"`
 }
+
 
 func StartWorker(cfg Config) error {
 	c, err := kafka.NewConsumer(&kafka.ConfigMap{
-		"bootstrap.servers": cfg.Brokers,
-		"group.id":          cfg.GroupID,
-		"auto.offset.reset": "earliest",
+		"bootstrap.servers":   cfg.Brokers,
+		"group.id":            cfg.GroupID,
+		"auto.offset.reset":   "earliest",
+		"security.protocol":   "PLAINTEXT",
+		"api.version.request": true,
 	})
 	if err != nil {
 		return err
@@ -117,7 +122,7 @@ func StartWorker(cfg Config) error {
 }
 
 func HandleJob(cfg Config, job Job) error {
-	text := GetSpeechText(job.ID)
+	text := string(job.Message)
 
 	audio, err := GenerateSpeech(cfg, text)
 	if err != nil {
@@ -128,22 +133,20 @@ func HandleJob(cfg Config, job Job) error {
 		return err
 	}
 
-	out := filepath.Join(cfg.OutputDir, fmt.Sprintf("%s.mp3", job.ID))
+	out := filepath.Join(cfg.OutputDir, fmt.Sprintf("%s.mp3", job.EventID))
 	return os.WriteFile(out, audio, 0644)
-}
-
-func GetSpeechText(jobID string) string {
-	return fmt.Sprintf(
-		"Hello. This audio was generated for job %s at %s.",
-		jobID,
-		time.Now().Format(time.RFC3339),
-	)
 }
 
 func GenerateSpeech(cfg Config, text string) ([]byte, error) {
 	payload := map[string]any{
 		"text":     text,
 		"model_id": "eleven_multilingual_v2",
+		"voice_settings": map[string]any{
+		"stability":        0.25,
+		"similarity_boost": 0.7,
+		"style":            0.8,
+		"use_speaker_boost": true,
+	},
 	}
 
 	b, _ := json.Marshal(payload)
