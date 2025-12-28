@@ -33,7 +33,7 @@ var outTopic = config.AnalysisStorageTopic
 type AnalysisEnvelope struct {
 	Repo string `json:"repo"`
 
-	// WorkflowCrash *model.WorkflowCrashPayload `json:"workflow_crash"`
+	WorkflowCrash *model.WorkflowCrashPayload `json:"workflow_crash"`
 	Bug           *model.BugPayload           `json:"bug"`
 	// Rule          *model.RuleIngestionPayload `json:"rule"`
 
@@ -146,12 +146,12 @@ func processMessage(
 	var stages sync.WaitGroup
 	var mu sync.Mutex
 	
-	// stages.Add(3)
+	stages.Add(2)
 
-	// go func() {
-	// 	defer stages.Done()
-	// 	envelope.WorkflowCrash = ProcessWorkflowCrash(req)
-	// }()
+	go func() {
+		defer stages.Done()
+		envelope.WorkflowCrash = ProcessWorkflowCrash(req, req.AccessToken, parts[0], parts[1])
+	}()
 
 	go func() {
 		defer stages.Done()
@@ -259,12 +259,30 @@ func emitEnvelope(
 	}
 }
 
-// func ProcessWorkflowCrash(
-// 	req *model.IngestRequest,
-// ) *model.WorkflowCrashPayload {
-// 	log.Println("ProcessWorkflowCrash:", req.Repo)
-// 	return &model.WorkflowCrashPayload{Repo: req.Repo}
-// }
+func ProcessWorkflowCrash(
+    req *model.IngestRequest, 
+    token string, 
+    owner string, 
+    repo string,
+) *model.WorkflowCrashPayload {
+    log.Println("ProcessWorkflowCrash:", req.Repo)
+
+		crashes, err := github.FetchWorkflowFailures(
+        github.NewClient(token),
+        owner,
+        repo,
+    )
+    if err != nil {
+        log.Println("[worker] workflow crash fetch failed:", err)
+        return &model.WorkflowCrashPayload{
+            Crash: []github.MinimalWorkflowFailure{},
+        }
+    }
+
+    return &model.WorkflowCrashPayload{
+        Crash: crashes,
+    }
+}
 
 func ProcessBug(req *model.IngestRequest , token string , owner string , repo string) *model.BugPayload {
 	log.Println("ProcessBug:", req.Repo)

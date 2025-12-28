@@ -24,3 +24,7 @@ type RejectedPRPayload struct {
 type BugPayload struct {
 	Issues []github.Issue
 }
+
+type WorkflowCrashPayload struct {
+	Crash []github.MinimalWorkflowFailure
+}

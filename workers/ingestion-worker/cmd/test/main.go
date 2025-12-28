@@ -1,4 +1,3 @@
-
 package main
 
 import (
@@ -41,7 +40,7 @@ func main() {
 
 	log.Println("[auth] installation token acquired")
 
-	// client := github.NewClient(token)
+	client := github.NewClient(token)
 
 	// ==========================================================
 	// 1. PR BUCKETS (REVERTED/REJECTED) - COMMENTED OUT
@@ -58,14 +57,21 @@ func main() {
 	// ==========================================================
 	// 2. KNOWN BUGS INGESTION
 	// ==========================================================
-	// bugs, err := github.FetchClosedIssuesRaw(client, owner, repoName)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	issues , err := github.FetchClosedIssuesRaw(token , owner, repoName)
-	if err != nil {
-		log.Fatal(err)
-	}
+	/*
+		bugs, err := github.FetchClosedBugs(client, owner, repoName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("[ingest] DONE. Found qualified bugs =%d", len(bugs))
+	*/
 
-	log.Printf("[ingest] DONE. Found qualified bugs =%d", len(issues))
+	// ==========================================================
+	// 3. WORKFLOW CRASH INGESTION
+	// ==========================================================
+	crashes, err := github.FetchWorkflowFailures(client, owner, repoName)
+	if err != nil {
+		log.Printf("[ingest] error fetching workflow crashes: %v", err)
+	} else {
+		log.Printf("[ingest] DONE. Workflow crashes found=%d (saved to crashes.json)", len(crashes))
+	}
 }
