@@ -51,7 +51,7 @@ const TOPICS = {
   RISK_EVENTS: "codrel.risk.events",
   FILE_SIGNALS: "codrel.file.signals",
   RAG_REQUESTS: "codrel.rag.requests",
-  ELEVENLAB_CALLS: "codrel.elevenlab.calls",
+  ELEVENLAB_CALLS: "tts.elevenlabs.jobs",
   INDEX_JOBS: "codrel.index.jobs",
   REPO_EVENTS: "codrel.repo.events",
 } as const;

@@ -23,9 +23,9 @@ app.use(express.static(path.join(__dirname, '../public')));
 initDatadog();
 
 app.use('/mcp', mcpRouter);
-app.use('/mcp', repoRouter);
-app.use('/mcp', agentRouter);
-app.use('/mcp', voiceRouter);
+app.use('/repo', repoRouter);
+app.use('/agent', agentRouter);
+app.use('/tts', voiceRouter);
 app.use('/webhooks', webhookRouter);
 app.use('/github', githubRouter);
 app.use('/health', healthRouter);
