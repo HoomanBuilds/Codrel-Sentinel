@@ -1,0 +1,92 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "build": {
+      "env": [
+        "CHROMA_DATABASE",
+        "CHROMA_TENANT",
+        "CHROMA_API_KEY",
+        "DATABASE_URL",
+        "GITHUB_ID",
+        "GITHUB_SECRET",
+        "NEXTAUTH_SECRET",
+        "NEXTAUTH_URL",
+        "GOOGLE_API_KEY",
+        "UPSTASH_VECTOR_REST_TOKEN",
+        "UPSTASH_VECTOR_REST_URL"
+      ],
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*",
+
+        "DATABASE_URL",
+        "GITHUB_ID",
+        "GITHUB_SECRET",
+
+        "CHROMA_TENANT",
+        "CHROMA_DATABASE",
+        "CHROMA_API_KEY",
+
+        "NEXTAUTH_SECRET",
+        "NEXTAUTH_URL",
+
+        "OPENAI_API_KEY"
+      ],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*",
+
+        "DATABASE_URL",
+        "GITHUB_ID",
+        "GITHUB_SECRET",
+        "CHROMA_TENANT",
+        "CHROMA_DATABASE",
+        "CHROMA_API_KEY",
+        "NEXTAUTH_SECRET",
+        "NEXTAUTH_URL",
+        "OPENAI_API_KEY"
+      ]
+    },
+    "check-types": {
+      "dependsOn": ["^check-types"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*",
+
+        "DATABASE_URL",
+        "GITHUB_ID",
+        "GITHUB_SECRET",
+        "CHROMA_TENANT",
+        "CHROMA_DATABASE",
+        "CHROMA_API_KEY",
+        "NEXTAUTH_SECRET",
+        "NEXTAUTH_URL",
+        "OPENAI_API_KEY"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*",
+
+        "DATABASE_URL",
+        "GITHUB_ID",
+        "GITHUB_SECRET",
+        "CHROMA_TENANT",
+        "CHROMA_DATABASE",
+        "CHROMA_API_KEY",
+        "NEXTAUTH_SECRET",
+        "NEXTAUTH_URL",
+        "OPENAI_API_KEY"
+      ]
+    }
+  }
+}
