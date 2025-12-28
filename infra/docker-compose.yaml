@@ -30,27 +30,3 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: sentinel
-      POSTGRES_PASSWORD: sentinel_dev
-      POSTGRES_DB: sentinel
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    depends_on:
-      - kafka
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: sentinel
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-
-volumes:
-  postgres_data:
