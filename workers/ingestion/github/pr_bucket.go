@@ -70,90 +70,109 @@ func FetchClosedPRBuckets(
 	}
 
 	for _, pr := range prs {
-		if pr.ClosedAt == nil || pr.ClosedAt.Before(cutoff) {
-			continue
+
+	// ---- build base PR first (do NOT cutoff early) ----
+
+	title := pr.GetTitle()
+
+	var mergedAt *time.Time
+	if pr.MergedAt != nil {
+		mergedAt = &pr.MergedAt.Time
+	}
+
+	base := MinimalPR{
+		Number:         pr.GetNumber(),
+		Title:          title,
+		Body:           pr.GetBody(),
+		CreatedAt:      pr.GetCreatedAt().Time,
+		MergedAt:       mergedAt,
+		MergeCommitSHA: pr.GetMergeCommitSHA(),
+		HTMLURL:        pr.GetHTMLURL(),
+	}
+
+	// ---- comments (unchanged) ----
+
+	if ENABLE_COMMENTS {
+		var comments []MinimalComment
+
+		issueComments, _, err := client.Issues.ListComments(
+			ctx,
+			owner,
+			repo,
+			pr.GetNumber(),
+			&github.IssueListCommentsOptions{
+				ListOptions: github.ListOptions{PerPage: 30},
+			},
+		)
+		if err != nil {
+			return nil, err
 		}
 
-		title := pr.GetTitle()
-		var mergedAt *time.Time
+		for _, c := range issueComments {
+			u := c.GetUser()
+			isBot := u.GetType() == "Bot"
+
+			comments = append(comments, MinimalComment{
+				Author:     u.GetLogin(),
+				AuthorType: map[bool]string{true: "bot", false: "human"}[isBot],
+				IsBot:      isBot,
+				Body:       c.GetBody(),
+				CreatedAt:  c.GetCreatedAt().Time,
+			})
+		}
+
+		reviewComments, _, err := client.PullRequests.ListComments(
+			ctx,
+			owner,
+			repo,
+			pr.GetNumber(),
+			&github.PullRequestListCommentsOptions{
+				ListOptions: github.ListOptions{PerPage: 30},
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, c := range reviewComments {
+			u := c.GetUser()
+			isBot := u.GetType() == "Bot"
+
+			comments = append(comments, MinimalComment{
+				Author:     u.GetLogin(),
+				AuthorType: map[bool]string{true: "bot", false: "human"}[isBot],
+				IsBot:      isBot,
+				Body:       c.GetBody(),
+				CreatedAt:  c.GetCreatedAt().Time,
+			})
+		}
+
+		base.Comments = comments
+	}
+
+	// ---- detect revert BEFORE cutoff ----
+
+	isRevert, err := isRevertPR(ctx, client, owner, repo, pr)
+	if err != nil {
+		return nil, err
+	}
+
+	// ---- closed check ----
+
+	if pr.ClosedAt == nil {
+		continue
+	}
+
+	// ---- cutoff applies ONLY to non-revert PRs ----
+
+	if !isRevert && pr.ClosedAt.Before(cutoff) {
+		continue
+	}
+
+	// ---- reverted PR handling ----
+
+	if isRevert {
 		if pr.MergedAt != nil {
-			mergedAt = &pr.MergedAt.Time
-		}
-
-		base := MinimalPR{
-			Number:         pr.GetNumber(),
-			Title:          title,
-			Body:           pr.GetBody(),
-			CreatedAt:      pr.GetCreatedAt().Time,
-			MergedAt:       mergedAt,
-			MergeCommitSHA: pr.GetMergeCommitSHA(),
-			HTMLURL:        pr.GetHTMLURL(),
-		}
-
-		if ENABLE_COMMENTS {
-			var comments []MinimalComment
-
-			issueComments, _, err := client.Issues.ListComments(
-				ctx,
-				owner,
-				repo,
-				pr.GetNumber(),
-				&github.IssueListCommentsOptions{
-					ListOptions: github.ListOptions{PerPage: 30},
-				},
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			for _, c := range issueComments {
-				u := c.GetUser()
-				isBot := u.GetType() == "Bot"
-
-				comments = append(comments, MinimalComment{
-					Author:     u.GetLogin(),
-					AuthorType: map[bool]string{true: "bot", false: "human"}[isBot],
-					IsBot:      isBot,
-					Body:       c.GetBody(),
-					CreatedAt:  c.GetCreatedAt().Time,
-				})
-			}
-
-			reviewComments, _, err := client.PullRequests.ListComments(
-				ctx,
-				owner,
-				repo,
-				pr.GetNumber(),
-				&github.PullRequestListCommentsOptions{
-					ListOptions: github.ListOptions{PerPage: 30},
-				},
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			for _, c := range reviewComments {
-				u := c.GetUser()
-				isBot := u.GetType() == "Bot"
-
-				comments = append(comments, MinimalComment{
-					Author:     u.GetLogin(),
-					AuthorType: map[bool]string{true: "bot", false: "human"}[isBot],
-					IsBot:      isBot,
-					Body:       c.GetBody(),
-					CreatedAt:  c.GetCreatedAt().Time,
-				})
-			}
-
-			base.Comments = comments
-		}
-
-		isRevert, err := isRevertPR(ctx, client, owner, repo, pr)
-			if err != nil {
-				return nil, err
-			}
-
-			if pr.MergedAt != nil && isRevert {
 			diff, _, err := client.PullRequests.GetRaw(
 				ctx,
 				owner,
@@ -164,16 +183,20 @@ func FetchClosedPRBuckets(
 			if err != nil {
 				return nil, err
 			}
-
 			base.Diff = diff
-			out.Reverted = append(out.Reverted, base)
-			continue
 		}
 
-		if pr.MergedAt == nil {
-			out.Rejected = append(out.Rejected, base)
-		}
+		out.Reverted = append(out.Reverted, base)
+		continue
 	}
+
+	// ---- rejected PR ----
+
+	if pr.MergedAt == nil {
+		out.Rejected = append(out.Rejected, base)
+	}
+}
+
 
 	log.Printf(
 		"[ingest] completed | reverted=%d rejected=%d",

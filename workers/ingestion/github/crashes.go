@@ -14,7 +14,19 @@ import (
 	"github.com/google/go-github/v61/github"
 )
 
-type MinimalWorkflowFailure struct {
+
+type CodeChange struct {
+	Filename string `json:"filename"`
+	Patch    string `json:"patch"`
+}
+
+type ChangeContext struct {
+	Type   string       `json:"type"`
+	Branch string       `json:"branch"`
+	Files  []CodeChange `json:"files"`
+}
+
+type WorkflowCrash struct {
 	ID             int64     `json:"id"`
 	Name           string    `json:"name"`
 	JobName        string    `json:"job_name"`
@@ -22,100 +34,211 @@ type MinimalWorkflowFailure struct {
 	HTMLURL        string    `json:"html_url"`
 	CreatedAt      time.Time `json:"created_at"`
 
-	Branch     string `json:"branch"`
-	HeadSHA    string `json:"head_sha"`
-	CommitMsg  string `json:"commit_msg"`
+	Branch    string `json:"branch"`
+	HeadSHA   string `json:"head_sha"`
+	CommitMsg string `json:"commit_msg"`
 
-	PRNumber int    `json:"pr_number,omitempty"`
-	PRTitle  string `json:"pr_title,omitempty"`
-	PRBody   string `json:"pr_body,omitempty"`
+	Change ChangeContext `json:"change"`
 }
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
-func FetchWorkflowFailures(client *github.Client, owner, repo string) ([]MinimalWorkflowFailure, error) {
+func FetchWorkflowFailures(
+	client *github.Client,
+	owner,
+	repo string,
+) ([]WorkflowCrash, error) {
+
 	ctx := context.Background()
 	cutoff := time.Now().AddDate(0, -3, 0)
 	maxFailures := 20
 
 	log.Printf("[ingest] fetching workflow crashes for %s/%s", owner, repo)
 
-	runs, _, err := client.Actions.ListRepositoryWorkflowRuns(ctx, owner, repo, &github.ListWorkflowRunsOptions{
-		Status:      "failure",
-		ListOptions: github.ListOptions{PerPage: 40},
-	})
+	runs, _, err := client.Actions.ListRepositoryWorkflowRuns(
+		ctx,
+		owner,
+		repo,
+		&github.ListWorkflowRunsOptions{
+			Status:      "failure",
+			ListOptions: github.ListOptions{PerPage: 40},
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	var failures []MinimalWorkflowFailure
+	var out []WorkflowCrash
+
 	for _, run := range runs.WorkflowRuns {
-		if len(failures) >= maxFailures || run.GetCreatedAt().Before(cutoff) {
+		if len(out) >= maxFailures || run.GetCreatedAt().Before(cutoff) {
 			continue
 		}
 
-		jobOpts := &github.ListWorkflowJobsOptions{Filter: "latest"}
-		jobs, _, err := client.Actions.ListWorkflowJobs(ctx, owner, repo, run.GetID(), jobOpts)
-		if err != nil || jobs == nil || len(jobs.Jobs) == 0 {
+
+		jobs, _, err := client.Actions.ListWorkflowJobs(
+			ctx,
+			owner,
+			repo,
+			run.GetID(),
+			&github.ListWorkflowJobsOptions{Filter: "latest"},
+		)
+		if err != nil || len(jobs.Jobs) == 0 {
 			continue
 		}
 
-		var failedJobID int64
-		var jobName string
+		var failedJob *github.WorkflowJob
 		for _, j := range jobs.Jobs {
 			if j.GetConclusion() == "failure" {
-				failedJobID = j.GetID()
-				jobName = j.GetName()
+				failedJob = j
 				break
 			}
 		}
-		if failedJobID == 0 { continue }
+		if failedJob == nil {
+			continue
+		}
 
-		url, _, err := client.Actions.GetWorkflowJobLogs(ctx, owner, repo, failedJobID, 3)
-		if err != nil { continue }
-		rawTail, _ := downloadLogContent(url.String())
 
-		f := MinimalWorkflowFailure{
+		logURL, _, err := client.Actions.GetWorkflowJobLogs(
+			ctx,
+			owner,
+			repo,
+			failedJob.GetID(),
+			3,
+		)
+		if err != nil {
+			continue
+		}
+
+		rawLog, _ := downloadLogContent(logURL.String())
+
+		crash := WorkflowCrash{
 			ID:             run.GetID(),
 			Name:           run.GetName(),
-			JobName:        jobName,
-			ErrorSignature: cleanANSI(rawTail),
+			JobName:        failedJob.GetName(),
+			ErrorSignature: cleanANSI(rawLog),
 			HTMLURL:        run.GetHTMLURL(),
 			CreatedAt:      run.GetCreatedAt().Time,
 			Branch:         run.GetHeadBranch(),
 			HeadSHA:        run.GetHeadSHA(),
 		}
 
-		commit, _, err := client.Repositories.GetCommit(ctx, owner, repo, f.HeadSHA, nil)
+
+		commit, _, err := client.Repositories.GetCommit(
+			ctx,
+			owner,
+			repo,
+			crash.HeadSHA,
+			nil,
+		)
 		if err == nil {
-			f.CommitMsg = commit.GetCommit().GetMessage()
+			crash.CommitMsg = commit.GetCommit().GetMessage()
 		}
+
 
 		var prNumber int
 		if len(run.PullRequests) > 0 {
 			prNumber = run.PullRequests[0].GetNumber()
 		} else {
-			prs, _, _ := client.PullRequests.ListPullRequestsWithCommit(ctx, owner, repo, f.HeadSHA, nil)
+			prs, _, _ := client.PullRequests.ListPullRequestsWithCommit(
+				ctx,
+				owner,
+				repo,
+				crash.HeadSHA,
+				nil,
+			)
 			if len(prs) > 0 {
 				prNumber = prs[0].GetNumber()
 			}
 		}
 
+
+		var changes []CodeChange
+
+		prDiffOK := false
+		changes = nil
+
 		if prNumber != 0 {
-			fullPR, _, err := client.PullRequests.Get(ctx, owner, repo, prNumber)
-			if err == nil {
-				f.PRNumber = fullPR.GetNumber()
-				f.PRTitle  = fullPR.GetTitle()
-				f.PRBody   = fullPR.GetBody()
+			opt := &github.ListOptions{PerPage: 100, Page: 1}
+
+			for {
+				files, resp, err := client.PullRequests.ListFiles(
+					ctx,
+					owner,
+					repo,
+					prNumber,
+					opt,
+				)
+				if err != nil {
+					break
+				}
+
+				for _, f := range files {
+					if f.GetPatch() == "" {
+						continue
+					}
+					changes = append(changes, CodeChange{
+						Filename: f.GetFilename(),
+						Patch:    f.GetPatch(),
+					})
+				}
+
+				if resp.NextPage == 0 {
+					break
+				}
+				opt.Page = resp.NextPage
+			}
+
+			if len(changes) > 0 {
+				crash.Change = ChangeContext{
+					Type:   "pr",
+					Branch: run.GetHeadBranch(),
+					Files:  changes,
+				}
+				prDiffOK = true
 			}
 		}
 
-		failures = append(failures, f)
+		if !prDiffOK && commit != nil {
+			changes = nil
+			for _, f := range commit.Files {
+				if f.GetPatch() == "" {
+					continue
+				}
+				changes = append(changes, CodeChange{
+					Filename: f.GetFilename(),
+					Patch:    f.GetPatch(),
+				})
+			}
+
+			crash.Change = ChangeContext{
+				Type:   "direct",
+				Branch: run.GetHeadBranch(),
+				Files:  changes,
+			}
+		} else if commit != nil {
+
+			for _, f := range commit.Files {
+				changes = append(changes, CodeChange{
+					Filename: f.GetFilename(),
+					Patch:    f.GetPatch(),
+				})
+			}
+
+			crash.Change = ChangeContext{
+				Type:   "direct",
+				Branch: run.GetHeadBranch(),
+				Files:  changes,
+			}
+		}
+
+		out = append(out, crash)
 	}
 
-	_ = writeJSON("crashes.json", failures)
-	return failures, nil
+	_ = writeJSON("crashes.json", out)
+	return out, nil
 }
+
 func downloadLogContent(url string) (string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -128,29 +251,29 @@ func downloadLogContent(url string) (string, error) {
 		return "", err
 	}
 
-	zipReader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 	if err == nil {
-		var combined []string
-		for _, file := range zipReader.File {
-			rc, _ := file.Open()
-			content, _ := io.ReadAll(rc)
+		var out []string
+		for _, f := range zr.File {
+			rc, _ := f.Open()
+			b, _ := io.ReadAll(rc)
 			rc.Close()
-			combined = append(combined, tailLines(string(content), 50))
+			out = append(out, tailLines(string(b), 50))
 		}
-		return strings.Join(combined, "\n---\n"), nil
+		return strings.Join(out, "\n---\n"), nil
 	}
 
 	return tailLines(string(body), 50), nil
 }
 
-func tailLines(data string, n int) string {
-	lines := strings.Split(strings.TrimSpace(data), "\n")
+func tailLines(s string, n int) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
 	if len(lines) <= n {
-		return data
+		return s
 	}
 	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
-func cleanANSI(text string) string {
-	return ansiRegex.ReplaceAllString(text, "")
+func cleanANSI(s string) string {
+	return ansiRegex.ReplaceAllString(s, "")
 }

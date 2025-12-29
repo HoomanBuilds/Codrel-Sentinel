@@ -306,7 +306,7 @@ func ProcessWorkflowCrash(
     if err != nil {
         log.Println("[worker] workflow crash fetch failed:", err)
         return &model.WorkflowCrashPayload{
-            Crash: []github.MinimalWorkflowFailure{},
+            Crash: []github.WorkflowCrash{},
         }
     }
 

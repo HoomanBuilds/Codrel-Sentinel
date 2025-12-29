@@ -27,7 +27,7 @@ type BugPayload struct {
 }
 
 type WorkflowCrashPayload struct {
-	Crash []github.MinimalWorkflowFailure
+	Crash []github.WorkflowCrash
 }
 
 type ArchPayload struct {
