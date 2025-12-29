@@ -1,162 +1,189 @@
 # Codrel Sentinel Architecture
 
+Codrel Sentinel is a **repository context and safety engine** that continuously analyzes repository history and exposes that context to AI agents and PR bots.
+
+It is built around **async processing**, **historical analysis**, and **context reuse**.
+
+---
+
+## High-Level Architecture
+
 ```
-┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│                              CODREL SENTINEL ARCHITECTURE                                 │
-│                        Governance & Risk-Assessment for AI Agents                        │
-└──────────────────────────────────────────────────────────────────────────────────────────┘
-
-                                    USER SIDE (External)
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                          │
-│  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐                     │
-│  │   GitHub Repo   │    │   CI/CD Pipeline │    │  AI Agent (IDE) │                     │
-│  │                 │    │  (Jenkins, etc)  │    │  (Cursor, etc)  │                     │
-│  └────────┬────────┘    └────────┬─────────┘    └────────┬────────┘                     │
-│           │                      │                       │                               │
-│           │ Webhook              │ Webhook               │ MCP Tool Call                │
-│           │ (push, PR,           │ (build failure,       │ (assessFileRisk,             │
-│           │  check_run)          │  success)             │  fileHistory)                │
-│           │                      │                       │                               │
-└───────────┼──────────────────────┼───────────────────────┼──────────────────────────────┘
-            │                      │                       │
-            ▼                      ▼                       ▼
-┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│                               CODREL SENTINEL BACKEND                                     │
-│                                                                                           │
-│  ┌─────────────────────────────────────────────────────────────────────────────────────┐ │
-│  │                           Express Server (Node.js + TypeScript)                     │ │
-│  │                                                                                     │ │
-│  │  ┌──────────────────┐   ┌───────────────────┐   ┌───────────────────┐             │ │
-│  │  │  /webhooks/github │   │   /webhooks/ci    │   │    /mcp/*         │             │ │
-│  │  │                   │   │                   │   │                   │             │ │
-│  │  │  • Handle PR      │   │  • Handle build   │   │  • assessFileRisk │             │ │
-│  │  │  • Handle push    │   │    failures       │   │  • fileHistory    │             │ │
-│  │  │  • Handle checks  │   │  • Handle deploy  │   │  • analyzeFile    │             │ │
-│  │  └────────┬──────────┘   └─────────┬─────────┘   └─────────┬─────────┘             │ │
-│  │           │                        │                       │                        │ │
-│  │           └────────────────────────┼───────────────────────┘                        │ │
-│  │                                    │                                                │ │
-│  │                                    ▼                                                │ │
-│  │  ┌─────────────────────────────────────────────────────────────────────────────┐   │ │
-│  │  │                         EVERY REQUEST LOGS TO DATADOG                        │   │ │
-│  │  │                                                                              │   │ │
-│  │  │  logRequest()          → HTTP request/response metrics                       │   │ │
-│  │  │  logCIFailure()        → CI failures by file (builds history)               │   │ │
-│  │  │  logFileSignal()       → File risk signals (reverts, hotfixes)              │   │ │
-│  │  │  logRiskAssessment()   → AI agent decisions & scores                        │   │ │
-│  │  │  logWebhookEvent()     → All incoming webhook events                        │   │ │
-│  │  │  logInternalError()    → Codrel's own errors (for internal ops)             │   │ │
-│  │  └─────────────────────────────────────────────────────────────────────────────┘   │ │
-│  └─────────────────────────────────────────────────────────────────────────────────────┘ │
-│                                                                                           │
-│  ┌──────────────────────────────────────────────────────────────────────────────────────┐│
-│  │                                Supporting Services                                    ││
-│  │                                                                                       ││
-│  │  ┌────────────────┐   ┌────────────────┐   ┌───────────────────┐                    ││
-│  │  │   Risk Engine  │   │    Database    │   │   Kafka Producer  │                    ││
-│  │  │                │   │   (Postgres)   │   │                   │                    ││
-│  │  │  • Score files │   │                │   │  • risk.events    │                    ││
-│  │  │  • Check rules │   │  • repos       │   │  • file.signals   │                    ││
-│  │  │  • Decisions   │   │  • file_meta   │   │  • elevenlab.calls│                    ││
-│  │  └────────────────┘   │  • risk_events │   └───────────────────┘                    ││
-│  │                       └────────────────┘                                             ││
-│  └──────────────────────────────────────────────────────────────────────────────────────┘│
-└───────────────────────────────────────────────────────────────────────────────────────────┘
-            │                                                              │
-            │  Logs via API                                                │ Kafka Messages
-            ▼                                                              ▼
-┌───────────────────────────────────────────┐    ┌─────────────────────────────────────────┐
-│              DATADOG                       │    │            GO WORKERS                   │
-│                                            │    │                                         │
-│  ┌────────────────────────────────────┐   │    │  ┌───────────────┐  ┌───────────────┐  │
-│  │            Logs                     │   │    │  │ Ingest Worker │  │ Events Worker │  │
-│  │                                     │   │    │  └───────────────┘  └───────────────┘  │
-│  │  • Every HTTP request              │   │    │                                         │
-│  │  • CI failures by file             │   │    │  ┌────────────────────────────────────┐│
-│  │  • Webhook events                  │   │    │  │       ElevenLabs Worker            ││
-│  │  • Risk assessments                │   │    │  │                                    ││
-│  │  • File signals                    │   │    │  │  Consumes: elevenlab.calls         ││
-│  │                                     │   │    │  │  Calls: ElevenLabs API             ││
-│  └────────────────────────────────────┘   │    │  │  Alerts: CODREL TEAM ONLY          ││
-│                                            │    │  └────────────────────────────────────┘│
-│  ┌────────────────────────────────────┐   │    └─────────────────────────────────────────┘
-│  │          Monitors                   │   │
-│  │                                     │   │                   │
-│  │  • High Risk Changes               │   │                   │
-│  │  • Token Exhausted                 │   │                   │
-│  │  • Rate Limit Hit                  │   │                   │
-│  │  • Agent Abuse Detected            │   │                   │
-│  │  • CI Failure Spike                │   │                   │
-│  └─────────────┬──────────────────────┘   │                   │
-│                │                          │                   │
-│                │ Webhook when alert fires │                   │
-│                ▼                          │                   │
-│  ┌────────────────────────────────────┐   │                   │
-│  │      DD Webhook → Codrel           │   │                   │
-│  │                                     │   │                   │
-│  │  POST /webhooks/datadog            │   │                   │
-│  │  → Triggers ElevenLabs call        │───┼───────────────────┘
-│  │     to CODREL TEAM for             │   │
-│  │     internal operations            │   │
-│  └────────────────────────────────────┘   │
-└────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│                           KEY FLOW: AI AGENT GETS CONTEXT                                │
-│                                                                                          │
-│   1. CI Fails → Webhook hits /webhooks/ci → logCIFailure() → DD stores "file X failed"  │
-│                                                                                          │
-│   2. AI Agent calls /mcp/fileHistory → Codrel queries DD logs + local DB                │
-│                                                                                          │
-│   3. Response includes promptContext: "⚠️ HIGH RISK: This file failed CI 3 times"       │
-│                                                                                          │
-│   4. AI Agent enriches its own prompt with this context before making changes           │
-│                                                                                          │
-│   5. If agent proceeds and causes another failure → signal recorded → risk score ↑      │
-└──────────────────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│                           KEY FLOW: INTERNAL ALERTS (ELEVENLABS)                         │
-│                                                                                          │
-│   1. Codrel backend logs error → DD receives log with level=error                        │
-│                                                                                          │
-│   2. DD Monitor "Token Exhausted" fires → DD sends webhook to /webhooks/datadog         │
-│                                                                                          │
-│   3. Codrel backend publishes to Kafka topic: elevenlab.calls                           │
-│                                                                                          │
-│   4. ElevenLabs Worker calls ElevenLabs API → CODREL TEAM gets voice alert              │
-│                                                                                          │
-│   NOTE: ElevenLabs is for CODREL INTERNAL OPS, NOT for end users!                       │
-└──────────────────────────────────────────────────────────────────────────────────────────┘
+┌───────────────┐
+│ Git Providers │  (GitHub, GitLab)
+└───────┬───────┘
+        │ Webhooks (PRs, issues, CI, workflows)
+        ▼
+┌──────────────────────────┐
+│ Codrel Sentinel Backend  │
+│ (Node.js + TypeScript)   │
+├──────────────────────────┤
+│ • Repo connection        │
+│ • Webhook ingestion      │
+│ • MCP endpoints          │
+│ • Context serving        │
+│ • Event publishing       │
+└───────┬──────────────────┘
+        │ Kafka events
+        ▼
+┌──────────────────────────┐
+│ Confluent Kafka          │
+│ (Async backbone)         │
+└───────┬──────────────────┘
+        │
+        ▼
+┌──────────────────────────┐
+│ Workers (Go)             │
+├──────────────────────────┤
+│ • Ingestion              │
+│ • AI analyzer + preserve │
+│   (Google Gemini)        │
+│ • call alert (elevenLab) │
+│ • sentinelBot            │
+│ • Continuous sync        │
+│ • events and logging     |
+|   (datadog)              |
+└───────┬──────────────────┘
+        │
+        ▼
+┌──────────────────────────┐
+│ Storage                  │
+│ (Postgres + vector)      │
+├──────────────────────────┤
+│ • Repo metadata          │
+│ • File risk signals      │
+│ • Vector store           │
+│ • Historical summaries   │
+└──────────────────────────┘
 ```
 
-## Summary
+---
 
-| Component | Purpose | Users |
-|-----------|---------|-------|
-| **Webhooks** | Receive events from GitHub/CI | External (users) |
-| **MCP Tools** | AI agent queries for context | External (IDE agents) |
-| **Datadog Logs** | Store ALL request/event history | Internal (Codrel ops) |
-| **Datadog Monitors** | Alert on anomalies | Internal (Codrel ops) |
-| **ElevenLabs** | Voice alerts for Codrel team | Internal (Codrel ops ONLY) |
+![Codrel Sentinel Architecture](./assets/arch.png)
 
-## Environment Variables
+---
 
-```bash
-# Datadog
-DD_API_KEY=your_api_key
-DD_SITE=datadoghq.com
-DD_SERVICE=codrel-sentinel
-DD_ENV=production
+## Repository Processing Flow
 
-# ElevenLabs (Internal Ops)
-ELEVENLABS_API_KEY=your_api_key
-ELEVENLABS_VOICE_ID=your_voice_id
+### 1. Repository Connection
 
-# Kafka
-KAFKA_BROKERS=localhost:9092
+* User installs the app and connects a repository
+* Sentinel registers the repo
+* An indexing job is published to Kafka
 
-# Database
-DATABASE_URL=postgres://...
-```
+### 2. Historical Analysis (Async)
+
+Workers analyze:
+
+* pull request history
+* reverted and failed changes
+* workflow and CI crashes
+* issues linked to files
+* sensitive paths (security, auth, infra)
+
+Gemini is used **only here** to:
+
+* analyze failure patterns
+* associate failures with files
+* generate compact, reusable context summaries
+
+### 3. Context Storage
+
+Results are stored as:
+
+* structured file-level signals (counts, flags)
+* compressed historical explanations
+
+This context becomes the **long-term memory** of the repository.
+
+---
+
+## Continuous Sync
+
+Sentinel keeps context fresh.
+
+Events such as:
+
+* PR merges or reverts
+* issue closures
+* workflow failures
+
+are:
+
+1. ingested via webhooks
+2. published to Kafka
+3. processed by workers
+4. merged into existing repo context
+
+No reprocessing from scratch.
+
+---
+
+## IDE Agent Flow (MCP)
+
+When an IDE AI agent edits code:
+
+1. Agent reports changed file(s)
+2. Agent calls Sentinel MCP tools (e.g. file safety check)
+3. Sentinel returns **precomputed context**:
+
+   * past failures
+   * historical risk
+   * why the file is sensitive
+
+No runtime AI analysis is required on Sentinel’s side.
+The agent reasons using the provided context.
+
+---
+
+## PR Bot Flow (SentinelBot)
+
+When a pull request is opened or updated:
+
+1. SentinelBot receives the PR diff and file list
+2. Workers fetch existing context for those files
+3. Gemini analyzes the PR **in light of historical context**
+4. SentinelBot posts a PR comment explaining:
+
+   * which files are risky
+   * what broke before
+   * what to watch out for
+
+This is context-aware review, not generic code review.
+
+---
+
+## Operational Observability & Alerts
+
+Sentinel emits internal telemetry from:
+
+* API endpoints
+* webhook ingestion
+* workers
+* Kafka consumers
+* AI usage and failures
+
+This telemetry is used to:
+
+* monitor system health
+* detect anomalies
+* trigger alerts
+
+For critical operational incidents:
+
+1. An alert fires
+2. A Kafka job is published
+3. A worker generates a short spoken explanation
+4. A voice alert is triggered via ElevenLabs
+
+This is used only for **internal operations**.
+
+---
+
+## Key Design Principles
+
+* async by default
+* no AI in the hot path
+* context is built once, reused everywhere
+* agents reason, Sentinel remembers
+* history > heuristics

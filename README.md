@@ -201,6 +201,12 @@ Voice is used for **incident-level signals**, not daily noise.
 
 ---
 
+## Architecture
+codrel sentinel architecture
+![Codrel Sentinel Architecture](./assets/arch.png)
+
+---
+
 ## What Codrel Sentinel Is (and Is Not)
 
 ### Sentinel **is**
