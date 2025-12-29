@@ -14,7 +14,6 @@ import (
 	"github.com/google/go-github/v61/github"
 )
 
-
 type CodeChange struct {
 	Filename string `json:"filename"`
 	Patch    string `json:"patch"`
@@ -27,12 +26,15 @@ type ChangeContext struct {
 }
 
 type WorkflowCrash struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	JobName        string    `json:"job_name"`
-	ErrorSignature string    `json:"error_signature"`
-	HTMLURL        string    `json:"html_url"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	JobName        string   `json:"job_name"`
+	ErrorSignature string   `json:"error_signature"`
+	ErrorFiles     []string `json:"error_files,omitempty"`
+	ErrorLines     []string `json:"error_lines,omitempty"`
+
+	HTMLURL   string    `json:"html_url"`
+	CreatedAt time.Time `json:"created_at"`
 
 	Branch    string `json:"branch"`
 	HeadSHA   string `json:"head_sha"`
@@ -42,6 +44,15 @@ type WorkflowCrash struct {
 }
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+var (
+	fileLineRegex  = regexp.MustCompile(`([a-zA-Z0-9_./-]+\.(ts|js|go|py|java|rs)):(\d+)`)
+	errorLineHints = []string{
+		"error", "fail", "exception", "panic",
+		"syntaxerror", "typeerror", "referenceerror",
+		"assert", "expected", "received",
+	}
+)
 
 func FetchWorkflowFailures(
 	client *github.Client,
@@ -75,7 +86,6 @@ func FetchWorkflowFailures(
 			continue
 		}
 
-
 		jobs, _, err := client.Actions.ListWorkflowJobs(
 			ctx,
 			owner,
@@ -98,7 +108,6 @@ func FetchWorkflowFailures(
 			continue
 		}
 
-
 		logURL, _, err := client.Actions.GetWorkflowJobLogs(
 			ctx,
 			owner,
@@ -111,18 +120,22 @@ func FetchWorkflowFailures(
 		}
 
 		rawLog, _ := downloadLogContent(logURL.String())
+		clean := cleanANSI(rawLog)
+
+		sig, files, lines := extractErrorContext(clean)
 
 		crash := WorkflowCrash{
 			ID:             run.GetID(),
 			Name:           run.GetName(),
 			JobName:        failedJob.GetName(),
-			ErrorSignature: cleanANSI(rawLog),
+			ErrorSignature: sig,
+			ErrorFiles:     files,
+			ErrorLines:     lines,
 			HTMLURL:        run.GetHTMLURL(),
 			CreatedAt:      run.GetCreatedAt().Time,
 			Branch:         run.GetHeadBranch(),
 			HeadSHA:        run.GetHeadSHA(),
 		}
-
 
 		commit, _, err := client.Repositories.GetCommit(
 			ctx,
@@ -134,7 +147,6 @@ func FetchWorkflowFailures(
 		if err == nil {
 			crash.CommitMsg = commit.GetCommit().GetMessage()
 		}
-
 
 		var prNumber int
 		if len(run.PullRequests) > 0 {
@@ -151,7 +163,6 @@ func FetchWorkflowFailures(
 				prNumber = prs[0].GetNumber()
 			}
 		}
-
 
 		var changes []CodeChange
 
@@ -276,4 +287,38 @@ func tailLines(s string, n int) string {
 
 func cleanANSI(s string) string {
 	return ansiRegex.ReplaceAllString(s, "")
+}
+
+func extractErrorContext(log string) (string, []string, []string) {
+	lines := strings.Split(log, "\n")
+
+	var errorLines []string
+	files := map[string]bool{}
+
+	for _, l := range lines {
+		low := strings.ToLower(l)
+
+		for _, hint := range errorLineHints {
+			if strings.Contains(low, hint) {
+				errorLines = append(errorLines, strings.TrimSpace(l))
+				break
+			}
+		}
+
+		matches := fileLineRegex.FindAllStringSubmatch(l, -1)
+		for _, m := range matches {
+			files[m[1]] = true
+		}
+	}
+
+	if len(errorLines) > 12 {
+		errorLines = errorLines[:12]
+	}
+
+	var fileList []string
+	for f := range files {
+		fileList = append(fileList, f)
+	}
+
+	return strings.Join(errorLines, "\n"), fileList, errorLines
 }
