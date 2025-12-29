@@ -45,12 +45,12 @@ func main() {
 	// ==========================================================
 	// 1. PR BUCKETS (REVERTED/REJECTED) - COMMENTED OUT
 	// ==========================================================
-	// p, err := github.FetchClosedPRBuckets(client, owner, repoName)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	p, err := github.FetchClosedPRBuckets(client, owner, repoName)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	// log.Printf("[ingest] DONE. reverted PRs=%d , rejected PRs=%d", len(p.Reverted), len(p.Rejected))
+	log.Printf("[ingest] DONE. reverted PRs=%d , rejected PRs=%d", len(p.Reverted), len(p.Rejected))
 
 	// ==========================================================
 	// 2. KNOWN BUGS INGESTION
@@ -64,12 +64,12 @@ func main() {
 	// ==========================================================
 	// 3. WORKFLOW CRASH INGESTION
 	// ==========================================================
-	crashes, err := github.FetchWorkflowFailures(client, owner, repoName)
-	if err != nil {
-		log.Printf("[ingest] error fetching workflow crashes: %v", err)
-	} else {
-		log.Printf("[ingest] DONE. Workflow crashes found=%d (saved to crashes.json)", len(crashes))
-	}
+	// crashes, err := github.FetchWorkflowFailures(client, owner, repoName)
+	// if err != nil {
+	// 	log.Printf("[ingest] error fetching workflow crashes: %v", err)
+	// } else {
+	// 	log.Printf("[ingest] DONE. Workflow crashes found=%d (saved to crashes.json)", len(crashes))
+	// }
 
 	// ==========================================================
 	// 4. REPO ARCHITECTURE SCAN
