@@ -25,10 +25,13 @@ function repoAction(status: string): Action {
   switch (status) {
     case "PAUSED":
       return { label: "RESUME", disabled: false, variant: "idle" };
-
+      
     case "QUEUED":
+      return { label: "QUEUED", disabled: false, variant: "idle" };
     case "FETCHING":
+      return { label: "FETCHING", disabled: false, variant: "idle" };
     case "ANALYZING":
+      return { label: "ANALYZING", disabled: false, variant: "idle" };
     case "INDEXING":
       return {
         label: status === "INDEXING" ? "PROCESSING" : status,
@@ -54,13 +57,11 @@ export default function Dashboard() {
   const [selectedInstall, setSelectedInstall] = useState<string | null>(null);
   const [repos, setRepos] = useState<any[]>([]);
 
-  // We only need one loading state now because we fetch everything at once
   const [isLoading, setIsLoading] = useState(true);
   const [connectingIds, setConnectingIds] = useState<Set<number>>(new Set());
 
   const toast = useToast();
 
-  // --- 1. Load Everything (Installations + Repos) Once ---
   useEffect(() => {
     if (status === "authenticated") {
       setIsLoading(true);
@@ -70,11 +71,9 @@ export default function Dashboard() {
           const installs = d.installations || [];
           setInstallations(installs);
 
-          // Automatically select the first installation
           if (installs.length > 0) {
             const firstId = installs[0].id;
             setSelectedInstall(String(firstId));
-            // ✅ FIX: Set repos directly from the installation object
             setRepos(installs[0].repositories || []);
           }
         })
@@ -115,7 +114,7 @@ export default function Dashboard() {
         );
       } catch (e) {
       }
-    }, 3000);
+    }, 2000);
 
     return () => {
       console.log("💤 Polling stopped (No active jobs)");
@@ -135,7 +134,6 @@ export default function Dashboard() {
     }
   };
 
-  // --- 4. Connect Action ---
   const connectRepo = async (repo: any) => {
     setConnectingIds((p) => new Set(p).add(repo.id));
     try {

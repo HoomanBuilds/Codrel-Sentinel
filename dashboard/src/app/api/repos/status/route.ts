@@ -7,9 +7,10 @@ import { authOptions } from "@/lib/auth";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id;
+  
+  const userIdentifier = session?.user?.email || (session?.user as any)?.login;
 
-  if (!userId) {
+  if (!userIdentifier) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -20,7 +21,7 @@ export async function GET() {
       error: repositories.error,
     })
     .from(repositories)
-    .where(eq(repositories.connectedBy, userId));
+    .where(eq(repositories.connectedBy, userIdentifier));
 
   return NextResponse.json({ repos: rows });
 }

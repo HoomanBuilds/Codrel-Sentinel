@@ -16,10 +16,10 @@ import (
 	ckafka "github.com/confluentinc/confluent-kafka-go/kafka"
 
 	"codrel-sentinel/workers/ingestion-worker/config"
+	"codrel-sentinel/workers/ingestion-worker/db"
 	"codrel-sentinel/workers/ingestion-worker/github"
 	"codrel-sentinel/workers/ingestion-worker/kafka"
 	"codrel-sentinel/workers/ingestion-worker/model"
-	"codrel-sentinel/workers/ingestion-worker/db"
 )
 
 const (
@@ -122,7 +122,6 @@ func worker(
 		}
 	}
 }
-
 func processMessage(
 	ctx context.Context,
 	msg *ckafka.Message,
@@ -135,14 +134,14 @@ func processMessage(
 	}
 
 	parts := strings.Split(req.Repo, "/")
-	if len(parts) != 2 {	
+	if len(parts) != 2 {
 		db.UpdateStatus(req.Repo, "FAILED")
 		log.Println("invalid repo:", req.Repo)
 		return
 	}
 
 	client := github.NewClient(req.AccessToken)
-	
+
 	switch req.Type {
 	case "sync":
 		log.Println("syning repo:", req.Repo)
@@ -150,19 +149,18 @@ func processMessage(
 		return
 	case "connection":
 		log.Println("processing repo:", req.Repo)
-		// db.UpdateStatus(req.Repo, "PROCESSING")
+
 		webhookURL := os.Getenv("BACKEND_WEBHOOK_URL")
 		webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
 		log.Printf(":setting webhook %s for repo %s", webhookURL, req.Repo)
-		
+
 		if webhookURL != "" {
 			err := github.SetupRepoWebhook(client, req.AccessToken, req.Repo, webhookURL, webhookSecret)
 			if err != nil {
-				// db.UpdateStatus(req.Repo, "FAILED")
 				log.Printf("[setup] webhook failed (critical): %v", err)
 			}
 		}
-		
+
 		db.UpdateStatus(req.Repo, "FETCHING")
 		envelope := AnalysisEnvelope{
 			Repo: req.Repo,
@@ -265,7 +263,6 @@ func processMessage(
 		}()
 
 		buildWG.Wait()
-
 		stages.Wait()
 
 		b, err := json.MarshalIndent(envelope, "", "  ")
@@ -276,21 +273,20 @@ func processMessage(
 		}
 
 		err = os.WriteFile("result.json", b, 0644)
-
 		log.Println("wrote result.json")
-		db.UpdateStatus(req.Repo, "QUEUED")
 
 		log.Printf("repo fetch completed for : %s", req.Repo)
 		if err := emitEnvelope(producer, envelope); err != nil {
-    db.UpdateStatus(req.Repo, "FAILED")
-    return
-}
+			log.Printf("❌ Failed to emit to Kafka: %v", err)
+			db.UpdateStatus(req.Repo, "FAILED")
+			return
+		}
+
 		db.UpdateStatus(req.Repo, "QUEUED")
 	default:
 		log.Printf("unknown request type: %s", req.Type)
 	}
 }
-
 func emitEnvelope(
     producer *ckafka.Producer,
     envelope AnalysisEnvelope,
@@ -300,16 +296,42 @@ func emitEnvelope(
         return err
     }
 
-    return producer.Produce(&ckafka.Message{
+    payloadSize := len(bytes)
+    log.Printf("📦 Payload size: %d bytes (%.2f MB)", payloadSize, float64(payloadSize)/1024/1024)
+
+    if payloadSize > 1000000 {
+        log.Println("⚠️ WARNING: Payload is close to or over the default Kafka 1MB limit!")
+    }
+
+    deliveryChan := make(chan ckafka.Event)
+
+    err = producer.Produce(&ckafka.Message{
         TopicPartition: ckafka.TopicPartition{
             Topic:     &outTopic,
             Partition: ckafka.PartitionAny,
         },
-        Key:   []byte("analysis_bundle"),
         Value: bytes,
-    }, nil)
-}
+    }, deliveryChan)
 
+    if err != nil {
+        return err
+    }
+
+    e := <-deliveryChan
+    m := e.(*ckafka.Message)
+    
+    close(deliveryChan)
+
+    if m.TopicPartition.Error != nil {
+        log.Printf("❌ Kafka Delivery Failed: %v", m.TopicPartition.Error)
+        return m.TopicPartition.Error
+    }
+
+    log.Printf("✅ Message delivered to topic %s [%d] at offset %v",
+        *m.TopicPartition.Topic, m.TopicPartition.Partition, m.TopicPartition.Offset)
+
+    return nil
+}
 
 func ProcessWorkflowCrash(
 	req *model.IngestRequest,
