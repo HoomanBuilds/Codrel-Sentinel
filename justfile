@@ -32,8 +32,8 @@ worker-sentinelBot:
 
 workers:
 	cd workers/elevenlab && go run . & \
-	cd workers/ingestion && go run main.go & \
-	cd workers/sentinelBot && go run main.go & \
+	cd workers/ingestion && go run . & \
+	cd workers/sentinelBot && go run . & \
 	cd workers/analyzer && npm run dev & \
 	cd workers/events && go run . & \
 	wait

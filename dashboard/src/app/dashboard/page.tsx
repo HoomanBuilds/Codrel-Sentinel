@@ -266,7 +266,7 @@ export default function Dashboard() {
                     repo={repo}
                     loading={connectingIds.has(repo.id)}
                     onConnect={() => connectRepo(repo)}
-                    onActivity={() => { router.push(`/repo/${repo.name}`); }}
+                    onActivity={() => { router.push(`/${repo.owner.login}/${repo.name}`); }}
                     setRepos={setRepos}
                   />
                 ))}

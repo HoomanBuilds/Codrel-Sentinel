@@ -144,7 +144,7 @@ function ignorableContext(
     file_path: file,
     risk_score: result.final_risk_score,
     tier: result.tier,
-    context: `No significant risk signals detected for ${file}.`,
+    context: `Stability Analysis: CLEAN.\nNo recent crashes, reversions, or negative signals detected for ${file}.`,
   };
 }
 
@@ -153,21 +153,24 @@ function normalContext(
   result: FileRiskResult,
   events: FileRiskEvent[]
 ): RiskContextResponse {
+  const keywords = result.signals.top_keywords.slice(0, 3).join(", ");
+  const recentSummary = events
+    .slice(-3)
+    .map((e) => `• [${e.event_type}] ${e.summary || "No details"}`)
+    .join("\n");
+
   return {
     file_path: file,
     risk_score: result.final_risk_score,
     tier: result.tier,
     context: `
-Minor risk signals detected.
+Stability Analysis: LOW RISK.
+Existing signals are minor or decayed over time.
 
-Dominant signal:
-- ${result.signals.dominant_event_type ?? "none"}
-
-Recent events:
-${events
-  .slice(-2)
-  .map((e) => `- ${e.summary ?? "no summary"}`)
-  .join("\n")}
+• Dominant Signal: ${result.signals.dominant_event_type || "None"}
+• Related Keywords: ${keywords || "None"}
+• Recent Activity:
+${recentSummary || "No recent relevant events."}
 `.trim(),
   };
 }
@@ -180,20 +183,29 @@ async function needContext(
 ): Promise<RiskContextResponse> {
   const vectors = await vectorSearch(
     repo,
-    `Recent issues related to ${file}. Change: ${change}`,
-    { type: { $in: ["workflow_crash", "reverted_pr", "rejected_pr"] } },
-    6
+    `Failures or bugs in ${file}. Context: ${change}`,
+    { type: { $in: ["workflow_crash", "reverted_pr"] } },
+    5
   );
+
+  const docs = vectors.documents?.[0] || [];
+  const history = docs.length > 0 
+    ? docs.map(d => `> "${(d || "").slice(0, 200)}..."`).join("\n") 
+    : "No exact matches found, but file metrics indicate volatility.";
 
   return {
     file_path: file,
     risk_score: result.final_risk_score,
     tier: result.tier,
     context: `
-Risk detected due to instability.
+Stability Analysis: MODERATE RISK.
+This file has a history of contributing to workflow instability.
 
-Relevant history:
-${vectors.documents?.[0]?.join("\n\n") ?? "No context found."}
+• Volatility Score: ${result.components.instability_score.toFixed(2)}
+• Primary Risk: ${result.signals.dominant_event_type}
+
+**Relevant Historical Incidents:**
+${history}
 `.trim(),
     sources: { workflow: 1, prs: 1 },
   };
@@ -207,24 +219,33 @@ async function deepContext(
 ): Promise<RiskContextResponse> {
   const vectors = await vectorSearch(
     repo,
-    `Historical risk patterns for ${file}. Change: ${change}`,
+    `Complex bugs, architecture violations, or reverts involving ${file}. Change: ${change}`,
     {
       type: {
         $in: ["workflow_crash", "reverted_pr", "rejected_pr", "issue"],
       },
     },
-    12
+    10
   );
+
+  const docs = vectors.documents?.[0] || [];
+  const history = docs.length > 0
+    ? docs.map((d, i) => `${i + 1}. ${(d || "").replace(/\n/g, " ")}`).join("\n")
+    : "High algorithmic risk score detected, though vector history is sparse.";
 
   return {
     file_path: file,
     risk_score: result.final_risk_score,
     tier: result.tier,
     context: `
-Persistent instability detected.
+Stability Analysis: HIGH RISK.
+This file is a frequent point of failure. Strict review required.
 
-Signals:
-${vectors.documents?.[0]?.slice(0, 8).join("\n\n") ?? "No data."}
+• Severity Entropy: ${result.components.severity_entropy.toFixed(2)} (High variance in failure types)
+• Top Keywords: ${result.signals.top_keywords.join(", ")}
+
+**Detailed Failure History:**
+${history}
 `.trim(),
     sources: { workflow: 1, prs: 1, issues: 1 },
   };
@@ -238,25 +259,63 @@ async function advancedContext(
 ): Promise<RiskContextResponse> {
   const vectors = await vectorSearch(
     repo,
-    `Deep historical analysis for ${file}. Change: ${change}`,
+    `Deep architectural analysis and regression history for ${file}. Change: ${change}`,
     {},
-    25
+    15
   );
 
-  const docs = vectors.documents?.[0] ?? [];
-
+  const docs = vectors.documents?.[0] || [];
+  
   return {
     file_path: file,
     risk_score: result.final_risk_score,
     tier: result.tier,
     context: `
-High confidence risk.
+Stability Analysis: CRITICAL / ARCHITECTURAL RISK.
+Changes to this file historically result in cascading failures or regressions.
 
-This file has long-term instability correlated with failures.
+**Risk Metrics:**
+• Recency Weighted Risk: ${result.components.recency_weighted_risk.toFixed(2)}
+• Correlation Score: ${result.components.correlation_score.toFixed(2)} (High coupling)
 
-Evidence:
-${docs.slice(0, 10).join("\n\n")}
+**Comprehensive Evidence:**
+${docs.map(d => `- ${d}`).join("\n\n")}
 `.trim(),
     sources: { workflow: 1, prs: 1, issues: 1, files: 1 },
   };
+}
+
+
+export function createSummedUpPrompt(
+  repo: string,
+  change: string,
+  results: RiskContextResponse[]
+): string {
+  
+  const criticalFiles = results
+    .filter(r => r.risk_score > 0.6)
+    .map(r => r.file_path);
+
+  const fileContexts = results.map(r => {
+    return `
+### FILE: ${r.file_path}
+**Risk Tier:** ${r.tier.toUpperCase()} (Score: ${r.risk_score.toFixed(2)})
+**Analysis Context:**
+${r.context}
+    `.trim();
+  }).join("\n\n---\n\n");
+
+  return `
+## INPUT DATA
+**Proposed Change:** ${change}
+**Critical Files Involved:** ${criticalFiles.length > 0 ? criticalFiles.join(", ") : "None detected"}
+
+## HISTORICAL RISK CONTEXT (Database & Vector Search Results)
+The following is a retrieval of past incidents, crashes, and revert logs associated with the files in this PR.
+
+${fileContexts}
+1. **Correlate:** logic in the "Proposed Change" with the "Historical Incidents" listed above.
+2. **Verify:** If a file has high risk but the change is trivial (e.g., whitespace), downplay the risk.
+3. **Warn:** If the change touches code paths mentioned in the "Detailed Failure History", issue a specific warning.
+`.trim();
 }

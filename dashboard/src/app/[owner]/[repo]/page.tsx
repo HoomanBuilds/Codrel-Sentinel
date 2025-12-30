@@ -16,7 +16,6 @@ import {
   PieChart,
   Pie,
   Cell,
-  LineChart,
   Line,
 } from "recharts";
 import {
@@ -38,7 +37,8 @@ import {
 } from "lucide-react";
 import { Card, Badge, cn } from "@/components/ui/primitives";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useToast } from "@/components/ui/toast";
 
 const botVerdicts = [
   { name: "Clean", value: 1 },
@@ -71,15 +71,15 @@ Sentinel listens to GitHub webhooks and analyzes:
 
 Every analysis run is correlated with repo size and PR activity.
 `;
-const events = Array.from({ length: 25 }).map((_, i) => ({
+const events = Array.from({ length: 3 }).map((_, i) => ({
   ts: Date.now() - i * 60000,
   event:
     i % 3 === 0
-      ? "analysis_completed"
+      ? "pr_rejected"
       : i % 3 === 1
-      ? "pr_reviewed"
-      : "webhook_received",
-  projectId: "sentinel-core",
+      ? "pr_reverted"
+      : "workflow_crash",
+  projectId: "mockREPO",
   metadata: {
     latency_ms: 180 + i * 12,
     files: 10 + i,
@@ -88,11 +88,25 @@ const events = Array.from({ length: 25 }).map((_, i) => ({
   success: i % 4 !== 0,
 }));
 
+
+
 export default function RepoAnalyticsPage() {
+   const params = useParams<{ owner: string; repo: string }>();
   const { data: session } = useSession();
   const [showEvent, setShowEvent] = useState(10);
-  const installations: any[] = [];
   const router = useRouter();
+
+  const handlePause = async () => {
+    try {
+      const r = await fetch("/api/repos/pause", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: `${params.owner}/${params.repo}` }),
+    });
+    router.push("/dashboard")
+  } catch {
+  }
+}
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-neutral-200 font-mono flex">
       <aside className="w-72 border-r border-neutral-800 p-5 space-y-6">
@@ -123,19 +137,19 @@ export default function RepoAnalyticsPage() {
           </div>
 
           <Card className="p-3 rounded-b-none bg-[#161616] border-neutral-800 space">
-            <div className="text-sm text-white truncate">sentinel-core</div>
+            <div className="text-sm text-white truncate">mockREPO</div>
             <div className="text-[10px] text-neutral-500 truncate">
-              codrel / sentinel-core
+              vinitngr / mockREPO
             </div>
 
             <div className="flex gap-2 mt-2">
               <Badge className="text-[9px]">PRIVATE</Badge>
-              <Badge className="text-[9px]">TypeScript</Badge>
+              <Badge className="text-[9px]">javascript</Badge>
             </div>
           </Card>
           <button
             className=" w-full px-2 py-1 text-xs border rounded-t-none border-neutral-700 rounded bg-red-600 hover:bg-neutral-800"
-            onClick={() => history.back()}
+            onClick={handlePause}
           >
             Disconnect
           </button>
@@ -149,7 +163,7 @@ export default function RepoAnalyticsPage() {
           <div className="space-y-1 max-h-56 overflow-y-auto">
             {[
               "mockREPO",
-              "chatchat"
+              "n8n-tunnel"
             ].map((repo) => (
               <div
                 key={repo}
@@ -195,7 +209,7 @@ export default function RepoAnalyticsPage() {
           <KPI icon={GitPullRequest} label="PRs Opened" value="12" />
           <KPI icon={AlertTriangle} label="Active - Closed Issues" value="2-2" />
           <KPI icon={AlertTriangle} label="Rejected" value="3" />
-          <KPI icon={FileDiff} label="Files Touched" value="120" />
+          <KPI icon={FileDiff} label="Files Touched" value="56" />
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">

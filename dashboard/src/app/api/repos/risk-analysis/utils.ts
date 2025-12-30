@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { RiskTier } from "@/lib/risk_handler/risk-analysis";
 import { tokensTable } from "@/lib/schema";
 import { eq } from "drizzle-orm";
 
@@ -22,7 +23,21 @@ export function toFileRiskEvent(row: any): FileRiskEvent {
     raw_payload: row.rawPayload,
   }
 }
-
+export type RiskContextResponse = {
+  file_path: string;
+  
+  risk_score: number;
+  
+  tier: RiskTier;
+  
+  context: string;
+  sources?: {
+    workflow?: number; // e.g., count of workflow crash logs found
+    prs?: number;      // e.g., count of reverted PRs found
+    issues?: number;   // e.g., count of related GitHub issues found
+    files?: number;    // e.g., count of architectural docs found
+  };
+};
 export type FileRiskEvent = {
   repo: string;
 

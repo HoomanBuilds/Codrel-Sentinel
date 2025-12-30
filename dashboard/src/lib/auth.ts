@@ -12,8 +12,6 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.GITHUB_CLIENT_SECRET!,
       authorization: {
         params: {
-          // Note: GitHub Apps ignore 'scope' in favor of the App's strict permissions
-          // but keeping this here is safe.
           scope: "read:user user:email read:org",
         },
       },
@@ -61,17 +59,9 @@ export const authOptions: NextAuthOptions = {
         token.login = (user as any).login;
       }
 
-      // === LOGGING START ===
       if (account?.access_token) {
-        console.log("\n==================================================");
-        console.log("✅ GITHUB LOGIN SUCCESSFUL");
-        console.log("🔑 NEW ACCESS TOKEN RECEIVED:");
-        console.log(account.access_token);
-        console.log("==================================================\n");
-        
         token.githubAccessToken = account.access_token;
       }
-      // === LOGGING END ===
 
       return token;
     },
