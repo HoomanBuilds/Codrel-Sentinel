@@ -6,18 +6,19 @@ export let pool: Pool;
 
 export function initDB() {
   const connectionString = process.env.DATABASE_URL;
-
+  
   if (!connectionString) {
     console.error("❌ DATABASE_URL environment variable is required");
     process.exit(1);
   }
-
+  
+  if (pool) return;
   pool = new Pool({
     connectionString,
     ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
   });
 
-  pool.query("SELECT NOW()", (err : Error) => {
+  pool.query("SELECT NOW()", (err : Error | null) => {
     if (err) {
       console.error("❌ Failed to connect to Database:", err);
       process.exit(1);
@@ -60,3 +61,7 @@ export async function markFailed(repoId: string, errMsg: string) {
     console.error(`❌ Failed to mark repo ${repoId} as FAILED:`, err);
   }
 }
+
+process.on("SIGTERM", async () => {
+  await pool?.end();
+});
