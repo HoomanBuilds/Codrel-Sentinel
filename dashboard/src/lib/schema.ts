@@ -68,11 +68,7 @@ export const repoFileEvents = pgTable(
     keywords: text("keywords").array(),
     summary: text("summary"),
 
-    createdAt: timestamp("created_at", {
-      withTimezone: true,
-      mode: "string",
-    }).notNull(),
-
+    createdAt: timestamp("created_at").defaultNow().notNull(),
     rawPayload: jsonb("raw_payload").notNull(),
   },
   table => ({
@@ -85,5 +81,21 @@ export const repoFileEvents = pgTable(
       table.filePath,
       table.createdAt
     ),
+  })
+);
+
+
+export const tokensTable = pgTable(
+  "tokens",
+  {
+    id: serial("id").primaryKey(),
+    email: varchar("email", { length: 255 }).notNull(),
+    token: varchar("token", { length: 255 }).notNull().unique(),
+    meta: jsonb("meta").notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    emailIdx: index("tokens_email_idx").on(table.email),
+    tokenIdx: index("tokens_token_idx").on(table.token),
   })
 );

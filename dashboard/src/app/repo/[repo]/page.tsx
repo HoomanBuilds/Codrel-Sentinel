@@ -38,77 +38,23 @@ import {
 } from "lucide-react";
 import { Card, Badge, cn } from "@/components/ui/primitives";
 import { useState } from "react";
-
-const prTimeline = [
-  { t: "Mon", opened: 6, merged: 4, rejected: 2 },
-  { t: "Tue", opened: 9, merged: 6, rejected: 1 },
-  { t: "Wed", opened: 4, merged: 3, rejected: 1 },
-  { t: "Thu", opened: 11, merged: 7, rejected: 3 },
-  { t: "Fri", opened: 8, merged: 6, rejected: 2 },
-];
-
-const analysisRuns = [
-  {
-    run: 1,
-    latency: 180,
-    files: 12,
-    prs: 1,
-    parse: 30,
-    analyze: 90,
-    index: 60,
-  },
-  {
-    run: 2,
-    latency: 420,
-    files: 84,
-    prs: 3,
-    parse: 70,
-    analyze: 240,
-    index: 110,
-  },
-  {
-    run: 3,
-    latency: 260,
-    files: 31,
-    prs: 2,
-    parse: 40,
-    analyze: 140,
-    index: 80,
-  },
-  {
-    run: 4,
-    latency: 610,
-    files: 140,
-    prs: 6,
-    parse: 120,
-    analyze: 360,
-    index: 130,
-  },
-];
-
-const fileChurn = [
-  { t: "Mon", files: 120 },
-  { t: "Tue", files: 240 },
-  { t: "Wed", files: 90 },
-  { t: "Thu", files: 310 },
-  { t: "Fri", files: 200 },
-];
+import { useRouter } from "next/navigation";
 
 const botVerdicts = [
-  { name: "Clean", value: 21 },
-  { name: "Warnings", value: 9 },
-  { name: "Blocked", value: 4 },
+  { name: "Clean", value: 1 },
+  { name: "Warnings", value: 0 },
+  { name: "Blocked", value: 0 },
 ];
 
 const BOT_COLORS = ["#4caf50", "#ffd369", "#ff6b6b"];
 
 const repoMeta = {
-  name: "sentinel-core",
+  name: "mockREPO",
   description:
-    "Sentinel bot analyzes PRs, file churn, and latency to detect risk and regressions.",
-  stars: 1243,
-  watchers: 87,
-  forks: 112,
+    "mock repo for sentinel test",
+  stars: 1,
+  watchers: 0,
+  forks: 0,
   visibility: "private",
   language: "TypeScript",
 };
@@ -146,7 +92,7 @@ export default function RepoAnalyticsPage() {
   const { data: session } = useSession();
   const [showEvent, setShowEvent] = useState(10);
   const installations: any[] = [];
-
+  const router = useRouter();
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-neutral-200 font-mono flex">
       <aside className="w-72 border-r border-neutral-800 p-5 space-y-6">
@@ -202,10 +148,8 @@ export default function RepoAnalyticsPage() {
 
           <div className="space-y-1 max-h-56 overflow-y-auto">
             {[
-              "sentinel-core",
-              "sentinel-ui",
-              "sentinel-agent",
-              "infra-config",
+              "mockREPO",
+              "chatchat"
             ].map((repo) => (
               <div
                 key={repo}
@@ -225,7 +169,7 @@ export default function RepoAnalyticsPage() {
         <div className="pt-4 border-t border-neutral-800 space-y-2">
           <button
             className="w-full text-left px-2 py-1 text-xs border border-neutral-700 rounded hover:bg-neutral-800"
-            onClick={() => history.back()}
+            onClick={() => router.push("/dashboard")}
           >
             ← Back to Repositories
           </button>
@@ -248,10 +192,10 @@ export default function RepoAnalyticsPage() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KPI icon={GitPullRequest} label="PRs Opened" value="38" />
-          <KPI icon={GitMerge} label="Merged" value="26" />
-          <KPI icon={AlertTriangle} label="Rejected" value="9" />
-          <KPI icon={FileDiff} label="Files Touched" value="960" />
+          <KPI icon={GitPullRequest} label="PRs Opened" value="12" />
+          <KPI icon={AlertTriangle} label="Active - Closed Issues" value="2-2" />
+          <KPI icon={AlertTriangle} label="Rejected" value="3" />
+          <KPI icon={FileDiff} label="Files Touched" value="120" />
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -389,6 +333,7 @@ const AreaChartBlock = () => (
       <YAxis tick={{ fill: "#666", fontSize: 10 }} />
       <Tooltip />
       <Area dataKey="opened" stackId="1" stroke="#29b6f6" fill="#29b6f6" />
+      {/* <Area dataKey="merged" stackId="1" stroke="" fill="#29b6f6" /> */}
       <Area dataKey="merged" stackId="1" stroke="#4caf50" fill="#4caf50" />
       <Area dataKey="rejected" stackId="1" stroke="#ff6b6b" fill="#ff6b6b" />
     </AreaChart>
@@ -465,3 +410,129 @@ const Meta = ({ icon: Icon, label, value }: any) => (
     <span className="text-neutral-200">{value}</span>
   </div>
 );
+
+
+export const prTimeline = [
+  {
+    "t": "Wed",
+    "opened": 0,
+    "rejected": 0,
+    "reverted": 0,
+    "merged" : 0
+  },
+  {
+    "t": "Thu",
+    "opened": 0,
+    "rejected": 0,
+    "reverted": 0,
+    "merged": 0
+  },
+  {
+    "t": "Fri",
+    "opened": 0,
+    "rejected": 0,
+    "reverted": 0,
+    "merged": 0
+  },
+  {
+    "t": "Sat",
+    "opened": 0,
+    "rejected": 0,
+    "reverted": 0,
+    "merged": 0
+  },
+  {
+    "t": "Sun",
+    "opened": 12,
+    "rejected": 3,
+    "reverted": 1,
+    "merged": 7
+  },
+  {
+    "t": "Mon",
+    "opened": 0,
+    "rejected": 0,
+    "reverted": 0,
+    "merged": 0
+  },
+  {
+    "t": "Tue",
+    "opened": 0,
+    "rejected": 0,
+    "reverted": 0,
+    "merged": 2
+  }
+];
+
+
+
+const analysisRuns = [
+  {
+    run: 0,
+    latency: 180,
+    files: 12,
+    prs: 1,
+    parse: 30,
+    analyze: 90,
+    index: 60,
+  },
+  {
+    run: 0,
+    latency: 420,
+    files: 84,
+    prs: 3,
+    parse: 70,
+    analyze: 240,
+    index: 110,
+  },
+  {
+    run: 0,
+    latency: 260,
+    files: 31,
+    prs: 2,
+    parse: 40,
+    analyze: 140,
+    index: 80,
+  },
+  {
+    run: 0,
+    latency: 610,
+    files: 140,
+    prs: 6,
+    parse: 120,
+    analyze: 360,
+    index: 130,
+  },
+];
+
+export const fileChurn = [
+  {
+    "t": "Sun",
+    "files": 55
+  },
+  {
+    "t": "Mon",
+    "files": 0
+  },
+  {
+    "t": "Tue",
+    "files": 1
+  },
+  {
+    "t": "Wed",
+    "files": 0
+  },
+  {
+    "t": "Thu",
+    "files": 0
+  },
+  {
+    "t": "Fri",
+    "files": 0
+  },
+  {
+    "t": "Sat",
+    "files": 0
+  }
+];
+

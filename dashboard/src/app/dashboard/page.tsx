@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Card, Badge, cn } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { useRouter } from "next/navigation";
 
 type Action = {
   label: string;
@@ -24,7 +25,7 @@ type Action = {
 
 export default function Dashboard() {
   const { data: session, status } = useSession();
-
+  const router = useRouter();
   const [installations, setInstallations] = useState<any[]>([]);
   const [selectedInstall, setSelectedInstall] = useState<string | null>(null);
   const [repos, setRepos] = useState<any[]>([]);
@@ -265,7 +266,8 @@ export default function Dashboard() {
                     repo={repo}
                     loading={connectingIds.has(repo.id)}
                     onConnect={() => connectRepo(repo)}
-                    onActivity={() => {}}
+                    onActivity={() => { router.push(`/repo/${repo.name}`); }}
+                    setRepos={setRepos}
                   />
                 ))}
               </div>
@@ -289,6 +291,7 @@ type RepoCardProps = {
   onConnect: () => void;
   onActivity: () => void;
   loading: boolean;
+  setRepos: React.Dispatch<React.SetStateAction<any[]>>;
 };
 
 const RepoCard: React.FC<RepoCardProps> = ({
@@ -296,66 +299,85 @@ const RepoCard: React.FC<RepoCardProps> = ({
   onConnect,
   onActivity,
   loading,
+  setRepos
 }) => {
   const action = repoAction(repo.status);
   const repoId = `${repo.owner.login}/${repo.name}`;
 
-  const handlePause = async () => {
-    try {
-      const r = await fetch("/api/repos/pause", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: repoId }),
-      });
+ const handlePause = async () => {
+  try {
+    const r = await fetch("/api/repos/pause", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: repoId }),
+    });
 
-      const data = await r.json();
-      if (!r.ok) {
-        toast({
-          type: "error",
-          message: data?.error || "Failed to pause repository",
-        });
-        return;
-      }
-      toast({ type: "success", message: "Repository paused successfully" });
-    } catch {
-      toast({ type: "error", message: "Network error while pausing repo" });
+    const data = await r.json();
+    if (!r.ok) {
+      toast({
+        type: "error",
+        message: data?.error || "Failed to pause repository",
+      });
+      return;
     }
-  };
+
+    setRepos((prev) =>
+      prev.map((r) =>
+        `${r.owner.login}/${r.name}` === repoId
+          ? { ...r, status: "PAUSED" }
+          : r
+      )
+    );
+
+    toast({ type: "success", message: "Repository paused successfully" });
+  } catch {
+    toast({ type: "error", message: "Network error while pausing repo" });
+  }
+};
+
 
   const toast = useToast();
 
   const handleResume = async () => {
-    try {
-      const r = await fetch("/api/repos/resume", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: repoId }),
-      });
+  try {
+    const r = await fetch("/api/repos/resume", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: repoId }),
+    });
 
-      const data = await r.json();
-      if (!r.ok) {
-        toast({
-          type: "error",
-          message: data?.error || "Failed to resume repository",
-        });
-        return;
-      }
-      toast({ type: "success", message: "Repository resumed successfully" });
-    } catch {
-      toast({ type: "error", message: "Network error while resuming repo" });
-      alert("Network error while resuming repo");
+    const data = await r.json();
+    if (!r.ok) {
+      toast({
+        type: "error",
+        message: data?.error || "Failed to resume repository",
+      });
+      return;
     }
-  };
+
+    setRepos((prev) =>
+      prev.map((r) =>
+        `${r.owner.login}/${r.name}` === repoId
+          ? { ...r, status: "READY" }
+          : r
+      )
+    );
+
+    toast({ type: "success", message: "Repository resumed successfully" });
+  } catch {
+    toast({ type: "error", message: "Network error while resuming repo" });
+  }
+};
+
 
   const handlePrimaryAction = () => {
-    if (repo.status === "FAILED" || repo.status === "DISCONNECTED") {
+    if (action.label === "CONNECT" || action.label === "RETRY") {
       onConnect();
       return;
     }
 
     if (repo.status === "PAUSED") {
       handleResume();
-      return;
     }
   };
 

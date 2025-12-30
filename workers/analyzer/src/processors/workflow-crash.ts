@@ -152,7 +152,7 @@ async function analyzeCrash(repo: string, crash: any) {
 export async function processWorkflowCrash(msg: KafkaMessage , eventBuffer: FileRiskEvent[]) {
   const payload = JSON.parse(msg.value!.toString());
   const repo = payload.repo;
-  const crashes = payload.workflow_crash?.crash ?? [];
+  const crashes = payload.workflow_crash?.Crash ?? [];
 
   if (!crashes.length) {
     log("workflow", `no crashes | repo=${repo}`);

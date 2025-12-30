@@ -1,114 +1,91 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, inArray, asc } from "drizzle-orm";
-import { analyzeFileRisk } from "./risk-analysis"
-import { db } from "@/lib/db"; 
+import { analyzeFileRisk } from "@/lib/risk_handler/risk-analysis";
+import { buildContextByTier } from "@/lib/risk_handler/handler";
+import { db } from "@/lib/db";
 import { repoFileEvents } from "@/lib/schema";
+import { requireToken, toFileRiskEvent } from "./utils";
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
+type LogLevel = "info" | "warn" | "error";
+const log = (l: LogLevel, m: string) => {
+  const t = new Date().toISOString().replace("T", " ").split(".")[0];
+  console.log(`${t} [${l}] ${m}`);
+};
 
-  const repo = searchParams.get("repo");
-  const filesParam = searchParams.get("files");
-
-  if (!repo) {
-    return NextResponse.json(
-      { error: "Missing repo param" },
-      { status: 400 }
-    );
+export async function POST(req: NextRequest) {
+  try { await requireToken(req); }
+  catch (e: any) {
+    log("warn", `auth failed | ${e.message}`);
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  if (!filesParam) {
-    return NextResponse.json(
-      { error: "Missing files param" },
-      { status: 400 }
-    );
+  let body: any;
+  try { body = await req.json(); }
+  catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const files = filesParam
-    .split(",")
-    .map(f => f.trim())
-    .filter(Boolean);
-
-  if (!files.length) {
+  const { repo, files, change } = body;
+  if (!repo || !Array.isArray(files) || !files.length || !change)
     return NextResponse.json(
-      { error: "No valid files provided" },
+      { error: "repo, files[], and change are required" },
       { status: 400 }
     );
-  }
 
-  const rows = await db
-    .select()
-    .from(repoFileEvents)
-    .where(
-      and(
-        eq(repoFileEvents.repo, repo),
-        inArray(repoFileEvents.filePath, files)
+  const cleanFiles = files.map((f: string) => f.trim()).filter(Boolean);
+  if (!cleanFiles.length)
+    return NextResponse.json({ error: "No valid files provided" }, { status: 400 });
+
+  let rows;
+  try {
+    rows = await db
+      .select()
+      .from(repoFileEvents)
+      .where(
+        and(
+          eq(repoFileEvents.repo, repo),
+          inArray(repoFileEvents.filePath, cleanFiles)
+        )
       )
-    )
-    .orderBy(asc(repoFileEvents.createdAt));
+      .orderBy(asc(repoFileEvents.createdAt));
+  } catch (e: any) {
+    log("error", `db query failed | repo=${repo} | ${e.message}`);
+    return NextResponse.json(
+      { error: "Failed to load repository events" },
+      { status: 500 }
+    );
+  }
 
   const byFile = new Map<string, typeof rows>();
-
-  for (const row of rows) {
-    const list = byFile.get(row.filePath);
-    if (list) list.push(row);
-    else byFile.set(row.filePath, [row]);
+  for (const r of rows) {
+    const l = byFile.get(r.filePath);
+    l ? l.push(r) : byFile.set(r.filePath, [r]);
   }
 
-  const results = files.map(file => {
-    const rowsForFile = byFile.get(file) ?? [];
-    const events = rowsForFile.map(toFileRiskEvent);
-    return analyzeFileRisk(file, events);
-  });
+  const results = [];
+  for (const file of cleanFiles) {
+    try {
+      const events = (byFile.get(file) ?? []).map(toFileRiskEvent);
+      const risk = analyzeFileRisk(file, events);
+      const ctx = await buildContextByTier(repo, file, risk, events, change);
+      results.push(ctx);
+    } catch (e: any) {
+      log("warn", `context failed | repo=${repo} | file=${file} | ${e.message}`);
+      results.push({
+        file_path: file,
+        risk_score: 0,
+        tier: "ignorable",
+        context: "Risk analysis unavailable due to internal context error.",
+      });
+    }
+  }
+
+  log("info", `risk-analysis completed | repo=${repo} files=${results.length}`);
 
   return NextResponse.json({
     repo,
+    change,
     count: results.length,
     results,
   });
 }
-
-function toFileRiskEvent(row: any): FileRiskEvent {
-  return {
-    repo: row.repo,
-    file_path: row.filePath,
-    affected_files: row.affectedFiles ?? undefined,
-
-    event_type: row.eventType,
-    event_source_id: row.eventSourceId ?? undefined,
-
-    severity_score: row.severityScore,
-    severity_label: row.severityLabel ?? undefined,
-
-    risk_category: row.riskCategory ?? undefined,
-    keywords: row.keywords ?? undefined,
-    summary: row.summary ?? undefined,
-
-    created_at: row.createdAt,
-    raw_payload: row.rawPayload,
-  }
-}
-
-export type FileRiskEvent = {
-  repo: string;
-
-  file_path: string;
-  affected_files?: string[];
-
-  event_type:
-    | "workflow_crash"
-    | "reverted_pr"
-    | "rejected_pr"
-    | "architecture";
-
-  event_source_id?: string;
-
-  severity_score: number;
-  severity_label?: "low" | "medium" | "high" | "critical";
-
-  risk_category?: string;
-  keywords?: string[];
-  summary?: string;
-  created_at : string;
-  raw_payload: unknown;
-};

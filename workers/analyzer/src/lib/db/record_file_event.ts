@@ -20,7 +20,7 @@ export type FileRiskEvent = {
   risk_category?: string;
   keywords?: string[];
   summary?: string;
-  created_at : string;
+  created_at: string;
   raw_payload: unknown;
 };
 
@@ -30,8 +30,10 @@ export async function recordFileEventsBatch(
   if (!events.length) return;
 
   const values: any[] = [];
+
   const rows = events.map((e, i) => {
-    const o = i * 10;
+    const o = i * 11;
+
     values.push(
       e.repo,
       e.file_path,
@@ -42,13 +44,14 @@ export async function recordFileEventsBatch(
       e.risk_category ?? null,
       e.keywords ?? null,
       e.summary ?? null,
-      JSON.stringify(e.raw_payload)
+      JSON.stringify(e.raw_payload),
+      e.created_at ?? new Date().toISOString()
     );
 
     return `(
-      $${o + 1}, $${o + 2}, $${o + 3}, $${o + 4},
-      $${o + 5}, $${o + 6}, $${o + 7}, $${o + 8},
-      $${o + 9}, $${o + 10}
+      $${o + 1},  $${o + 2},  $${o + 3},  $${o + 4},
+      $${o + 5},  $${o + 6},  $${o + 7},  $${o + 8},
+      $${o + 9},  $${o + 10}, $${o + 11}
     )`;
   });
 
@@ -63,7 +66,8 @@ export async function recordFileEventsBatch(
       risk_category,
       keywords,
       summary,
-      raw_payload
+      raw_payload,
+      created_at
     )
     VALUES ${rows.join(",")}
   `;
