@@ -9,8 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
     "axios": "^1.13.2",
     "clsx": "^2.1.1",
+    "drizzle-orm": "^0.44.7",
     "jsonwebtoken": "^9.0.3",
     "kafkajs": "^2.2.4",
     "lucide-react": "^0.562.0",

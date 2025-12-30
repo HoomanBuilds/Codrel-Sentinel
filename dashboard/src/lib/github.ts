@@ -1,41 +1,49 @@
 import { App } from "octokit";
-import fs from "fs";
-import path from "path";
-
-function getPrivateKey() {
-  if (process.env.GITHUB_PRIVATE_KEY) return process.env.GITHUB_PRIVATE_KEY.replace(/\\n/g, "\n");
-  
-  if (process.env.GITHUB_PRIVATE_KEY_PATH) {
-    try {
-      const keyPath = path.resolve(process.cwd(), process.env.GITHUB_PRIVATE_KEY_PATH);
-      return fs.readFileSync(keyPath, "utf-8");
-    } catch (err) {
-      console.error(`❌ FATAL: Could not read private key from path: ${process.env.GITHUB_PRIVATE_KEY_PATH}`);
-      throw err;
-    }
-  }
-  throw new Error("Missing GITHUB_PRIVATE_KEY or GITHUB_PRIVATE_KEY_PATH");
-}
 
 const sentinelApp = new App({
   appId: process.env.GITHUB_APP_ID!,
-  privateKey: getPrivateKey(),
+  privateKey: (process.env.GITHUB_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
 });
 
 export const github = {
-  listInstallations: async () => {
+  getAllInstallationsWithRepos: async () => {
     try {
-      const { data } = await sentinelApp.octokit.request("GET /app/installations");
+      const installations = await sentinelApp.octokit.paginate("GET /app/installations");
+
+      const data = await Promise.all(
+        installations.map(async (inst: any) => {
+          try {
+            const installOctokit = await sentinelApp.getInstallationOctokit(inst.id);
+            
+            const { data: repos } = await installOctokit.request("GET /installation/repositories");
+            
+            return {
+              ...inst,
+              repositories: repos.repositories
+            };
+          } catch (err) {
+            console.error(`Failed to load repos for ${inst.account.login}`, err);
+            return { ...inst, repositories: [] };
+          }
+        })
+      );
+
       return data;
-    } catch (e: any) {
-      console.error("❌ Error listing installations:", e.message);
+    } catch (error) {
+      console.error("Critical Error fetching all installations:", error);
       return [];
     }
   },
-
-  listRepos: async (installationId: number) => {
-  const octokit = await sentinelApp.getInstallationOctokit(installationId);
-  const { data } = await octokit.request("GET /installation/repositories");
-  return data.repositories;
-}
 };
+
+
+export async function getRepoInstallationToken(
+  installationId: number
+): Promise<string> {
+  const auth : any = await sentinelApp.octokit.auth({
+    type: "installation",
+    installationId,
+  });
+
+  return auth.token;
+}

@@ -19,6 +19,7 @@ import (
 	"codrel-sentinel/workers/ingestion-worker/github"
 	"codrel-sentinel/workers/ingestion-worker/kafka"
 	"codrel-sentinel/workers/ingestion-worker/model"
+	"codrel-sentinel/workers/ingestion-worker/db"
 )
 
 const (
@@ -28,20 +29,21 @@ const (
 
 var githubLimiter = rate.NewLimiter(2, 4)
 
-var outTopic = config.AnalysisStorageTopic
+var outTopic = config.AnalysisTopic
 
 type AnalysisEnvelope struct {
 	Repo string `json:"repo"`
 
 	WorkflowCrash *model.WorkflowCrashPayload `json:"workflow_crash"`
 	Bug           *model.BugPayload           `json:"bug"`
-	Rule          *model.ArchPayload `json:"rule"`
+	Rule          *model.ArchPayload          `json:"rule"`
 
 	RevertedPRs []model.RevertedPRPayload `json:"reverted_prs"`
 	RejectedPRs []model.RejectedPRPayload `json:"rejected_prs"`
 }
 
 func main() {
+	db.InitDB()
 	consumer, err := kafka.NewConsumer()
 	if err != nil {
 		panic(err)
@@ -96,6 +98,7 @@ func main() {
 	cancel()
 
 	wg.Wait()
+	producer.Flush(5000)
 	log.Println("all workers stopped")
 }
 
@@ -132,50 +135,55 @@ func processMessage(
 	}
 
 	parts := strings.Split(req.Repo, "/")
-	if len(parts) != 2 {
+	if len(parts) != 2 {	
+		db.UpdateStatus(req.Repo, "FAILED")
 		log.Println("invalid repo:", req.Repo)
 		return
 	}
 
 	client := github.NewClient(req.AccessToken)
-
-	log.Println("processing repo:", req.Repo)
-
+	
 	switch req.Type {
 	case "sync":
+		log.Println("syning repo:", req.Repo)
 		log.Printf("[sync] received sync request for %s - skipping for now", req.Repo)
 		return
-	case "connection" :
+	case "connection":
+		log.Println("processing repo:", req.Repo)
+		// db.UpdateStatus(req.Repo, "PROCESSING")
 		webhookURL := os.Getenv("BACKEND_WEBHOOK_URL")
 		webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
-		log.Printf(":setting webhook %s for repo %s", webhookURL , req.Repo)
-
+		log.Printf(":setting webhook %s for repo %s", webhookURL, req.Repo)
+		
 		if webhookURL != "" {
 			err := github.SetupRepoWebhook(client, req.AccessToken, req.Repo, webhookURL, webhookSecret)
-			
 			if err != nil {
+				// db.UpdateStatus(req.Repo, "FAILED")
 				log.Printf("[setup] webhook failed (critical): %v", err)
 			}
 		}
-
+		
+		db.UpdateStatus(req.Repo, "FETCHING")
 		envelope := AnalysisEnvelope{
 			Repo: req.Repo,
 		}
 
 		var stages sync.WaitGroup
 		var mu sync.Mutex
-		
+
 		stages.Add(3)
 
 		go func() {
 			defer stages.Done()
+			mu.Lock()
 			envelope.WorkflowCrash = ProcessWorkflowCrash(req, req.AccessToken, parts[0], parts[1])
+			mu.Unlock()
 		}()
 
 		go func() {
 			defer stages.Done()
 			mu.Lock()
-			envelope.Bug = ProcessBug(req , req.AccessToken , parts[0] , parts[1])
+			envelope.Bug = ProcessBug(req, req.AccessToken, parts[0], parts[1])
 			mu.Unlock()
 		}()
 
@@ -187,13 +195,12 @@ func processMessage(
 				return
 			}
 			mu.Lock()
-			envelope.Rule = &model.ArchPayload{
-				Files: files,
-			}
+			envelope.Rule = &model.ArchPayload{Files: files}
 			mu.Unlock()
 		}()
 
 		if err := githubLimiter.Wait(ctx); err != nil {
+			db.UpdateStatus(req.Repo, "FAILED")
 			log.Println("rate limiter cancelled")
 			return
 		}
@@ -204,6 +211,7 @@ func processMessage(
 			parts[1],
 		)
 		if err != nil {
+			db.UpdateStatus(req.Repo, "FAILED")
 			log.Println("github fetch failed:", err)
 			return
 		}
@@ -231,7 +239,7 @@ func processMessage(
 					},
 				)
 			}
-			mu.Lock()	
+			mu.Lock()
 			envelope.RevertedPRs = res
 			mu.Unlock()
 		}()
@@ -260,62 +268,75 @@ func processMessage(
 
 		stages.Wait()
 
-		emitEnvelope(producer, envelope)
-		default:
+		b, err := json.MarshalIndent(envelope, "", "  ")
+		if err != nil {
+			log.Println("marshal failed:", err)
+			db.UpdateStatus(req.Repo, "FAILED")
+			return
+		}
+
+		err = os.WriteFile("result.json", b, 0644)
+
+		log.Println("wrote result.json")
+		db.UpdateStatus(req.Repo, "QUEUED")
+
+		log.Printf("repo fetch completed for : %s", req.Repo)
+		if err := emitEnvelope(producer, envelope); err != nil {
+    db.UpdateStatus(req.Repo, "FAILED")
+    return
+}
+		db.UpdateStatus(req.Repo, "QUEUED")
+	default:
 		log.Printf("unknown request type: %s", req.Type)
 	}
 }
 
 func emitEnvelope(
-	producer *ckafka.Producer,
-	envelope AnalysisEnvelope,
-) {
-	bytes, err := json.Marshal(envelope)
-	if err != nil {
-		log.Println("marshal failed:", err)
-		return
-	}
+    producer *ckafka.Producer,
+    envelope AnalysisEnvelope,
+) error {
+    bytes, err := json.Marshal(envelope)
+    if err != nil {
+        return err
+    }
 
-	err = producer.Produce(&ckafka.Message{
-		TopicPartition: ckafka.TopicPartition{
-			Topic:     &outTopic,
-			Partition: ckafka.PartitionAny,
-		},
-		Key:   []byte("analysis_bundle"),
-		Value: bytes,
-	}, nil)
-
-	if err != nil {
-		log.Println("produce failed:", err)
-	}
+    return producer.Produce(&ckafka.Message{
+        TopicPartition: ckafka.TopicPartition{
+            Topic:     &outTopic,
+            Partition: ckafka.PartitionAny,
+        },
+        Key:   []byte("analysis_bundle"),
+        Value: bytes,
+    }, nil)
 }
+
 
 func ProcessWorkflowCrash(
-    req *model.IngestRequest, 
-    token string, 
-    owner string, 
-    repo string,
+	req *model.IngestRequest,
+	token string,
+	owner string,
+	repo string,
 ) *model.WorkflowCrashPayload {
-    log.Println("ProcessWorkflowCrash:", req.Repo)
+	log.Println("ProcessWorkflowCrash:", req.Repo)
 
-		crashes, err := github.FetchWorkflowFailures(
-        github.NewClient(token),
-        owner,
-        repo,
-    )
-    if err != nil {
-        log.Println("[worker] workflow crash fetch failed:", err)
-        return &model.WorkflowCrashPayload{
-            Crash: []github.WorkflowCrash{},
-        }
-    }
+	crashes, err := github.FetchWorkflowFailures(
+		github.NewClient(token),
+		owner,
+		repo,
+	)
+	if err != nil {
+		log.Println("[worker] workflow crash fetch failed:", err)
+		return &model.WorkflowCrashPayload{
+			Crash: []github.WorkflowCrash{},
+		}
+	}
 
-    return &model.WorkflowCrashPayload{
-        Crash: crashes,
-    }
+	return &model.WorkflowCrashPayload{
+		Crash: crashes,
+	}
 }
 
-func ProcessBug(req *model.IngestRequest , token string , owner string , repo string) *model.BugPayload {
+func ProcessBug(req *model.IngestRequest, token string, owner string, repo string) *model.BugPayload {
 	log.Println("ProcessBug:", req.Repo)
 
 	issues, err := github.FetchClosedIssuesRaw(
@@ -334,20 +355,20 @@ func ProcessBug(req *model.IngestRequest , token string , owner string , repo st
 }
 
 func ProcessArchitecture(
-    req *model.IngestRequest, 
-    token string, 
-    owner string, 
-    repo string,
+	req *model.IngestRequest,
+	token string,
+	owner string,
+	repo string,
 ) *model.ArchPayload {
-    log.Println("ProcessArchitecture:", req.Repo)
+	log.Println("ProcessArchitecture:", req.Repo)
 
-    files, err := github.FetchRepoArchitecture(github.NewClient(token), owner, repo)
-    if err != nil {
-        log.Println("arch fetch failed:", err)
-        return &model.ArchPayload{}
-    }
+	files, err := github.FetchRepoArchitecture(github.NewClient(token), owner, repo)
+	if err != nil {
+		log.Println("arch fetch failed:", err)
+		return &model.ArchPayload{}
+	}
 
-    return &model.ArchPayload{
-        Files: files,
-    }
+	return &model.ArchPayload{
+		Files: files,
+	}
 }

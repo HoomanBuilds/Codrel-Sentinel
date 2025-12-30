@@ -3,10 +3,8 @@ package config
 const (
 	BootstrapServers = "localhost:9092"
 
-	RequestTopic  = "repo.ingest.request"
-	RevertedTopic = "repo.ingest.reverted"
+	AnalysisTopic = "repo.analysis.ai"
+	RequestTopic  = "repo.analysis.request"
 
-	AnalysisStorageTopic = "repo.analysis.connection"
-	RejectedTopic = "repo.ingest.rejected"
 	ConsumerGroup = "go-ingest-worker"
 )

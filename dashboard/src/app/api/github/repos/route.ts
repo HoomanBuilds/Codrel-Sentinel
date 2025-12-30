@@ -1,36 +1,65 @@
-import { NextRequest, NextResponse } from "next/server";
-import { github } from "@/lib/github";
-import { jsonDb } from "@/lib/db";
+// import { NextRequest, NextResponse } from "next/server";
+// import { github } from "@/lib/github";
+// import { repositories } from "@/lib/schema";
+// import { eq } from "drizzle-orm";
+// import { db } from "@/lib/db";
+// import { getServerSession } from "next-auth";
+// import { authOptions } from "@/lib/auth";
 
-export const dynamic = 'force-dynamic';
+// export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const installationId = searchParams.get("installationId");
+// export async function GET(req: NextRequest) {
+//   const session = await getServerSession(authOptions);
+//   const token = (session?.user as any)?.githubAccessToken;
 
-  if (!installationId) {
-    return NextResponse.json({ error: "Missing installationId" }, { status: 400 });
-  }
+//   if (!token) {
+//     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+//   }
 
-  try {
-    console.log(`📥 Fetching repos for Installation ID: ${installationId}`);
-    const rawRepos = await github.listRepos(Number(installationId));
+//   const { searchParams } = new URL(req.url);
+//   const installationId = searchParams.get("installationId");
 
-    const connectedRepos = jsonDb.getConnectedRepos() || [];
-    const connectedIds = new Set(connectedRepos.map((r: any) => r.id));
+//   if (!installationId) {
+//     return NextResponse.json(
+//       { error: "Missing installationId" },
+//       { status: 400 }
+//     );
+//   }
 
-    const enhancedRepos = rawRepos.map((repo: any) => ({
-      ...repo,
-      isConnected: connectedIds.has(repo.id)
-    }));
+//   try {
+//     const rawRepos = await github.listUserRepos(
+//       token,
+//       Number(installationId)
+//     );
 
-    return NextResponse.json({ 
-      count: enhancedRepos.length,
-      repositories: enhancedRepos 
-    });
+//     const connectedRepos = await db
+//       .select({
+//         id: repositories.id,
+//         status: repositories.status,
+//       })
+//       .from(repositories)
+//       .where(eq(repositories.installationId, installationId));
 
-  } catch (error: any) {
-    console.error("API Error:", error);
-    return NextResponse.json({ repositories: [] }); 
-  }
-}
+//     const repoMap = new Map(
+//       connectedRepos.map((r) => [r.id, r.status])
+//     );
+
+//     const enhancedRepos = rawRepos.map((repo: any) => {
+//       const repoId = `${repo.owner.login}/${repo.name}`;
+//       const status = repoMap.get(repoId);
+
+//       return {
+//         ...repo,
+//         status: status ?? "DISCONNECTED",
+//         isConnected: Boolean(status),
+//       };
+//     });
+
+//     return NextResponse.json({
+//       count: enhancedRepos.length,
+//       repositories: enhancedRepos,
+//     });
+//   } catch {
+//     return NextResponse.json({ repositories: [] });
+//   }
+// }
