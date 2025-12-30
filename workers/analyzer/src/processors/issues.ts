@@ -13,6 +13,7 @@ export async function processIssues(repo: string, issues: any[]) {
     text: `Title: ${issue.title}\nBody: ${issue.body}`,
     metadata: {
       repo,
+      type: "issue",
       issue_number: issue.number,
       url: issue.html_url,
       state: issue.state,

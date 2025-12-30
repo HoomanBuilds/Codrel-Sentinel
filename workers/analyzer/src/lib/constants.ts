@@ -1,0 +1,1 @@
+export const GLOBAL_MODEL="gemini-2.5-flash-lite";

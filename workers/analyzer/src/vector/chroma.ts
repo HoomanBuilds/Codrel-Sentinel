@@ -40,7 +40,7 @@ export async function upsertVectorsBatch(
   log("vector", `starting batch upsert | size=${items.length}`);
 
   const col = await client.getOrCreateCollection({
-    name: collectionName,
+    name: toCollectionName(collectionName),
     embeddingFunction: null, 
   });
 
@@ -57,4 +57,8 @@ export async function upsertVectorsBatch(
   });
 
   log("vector", `batch completed | collection=${collectionName} upserted=${items.length}`);
+}
+
+function toCollectionName(repo: string) {
+  return repo.replace(/[^a-zA-Z0-9._-]/g, "_");
 }

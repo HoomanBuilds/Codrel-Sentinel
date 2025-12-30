@@ -2,7 +2,7 @@ import { Kafka, logLevel } from "kafkajs";
 
 export const kafka = new Kafka({
   clientId: "sentinel-analyzer",
-  brokers: [process.env.KAFKA_BROKER || "localhost:9092"],
+  brokers: [process.env.KAFKA_BROKER!],
   logLevel : logLevel.ERROR,
   retry: { retries: 3 },
 });

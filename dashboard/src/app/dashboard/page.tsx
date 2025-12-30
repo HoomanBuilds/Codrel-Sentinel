@@ -11,6 +11,7 @@ import {
   Github,
   Building2,
   User,
+  Pause,
 } from "lucide-react";
 import { Card, Badge, cn } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
@@ -20,35 +21,6 @@ type Action = {
   disabled: boolean;
   variant: "idle" | "active" | "error";
 };
-
-function repoAction(status: string): Action {
-  switch (status) {
-    case "PAUSED":
-      return { label: "RESUME", disabled: false, variant: "idle" };
-      
-    case "QUEUED":
-      return { label: "QUEUED", disabled: false, variant: "idle" };
-    case "FETCHING":
-      return { label: "FETCHING", disabled: false, variant: "idle" };
-    case "ANALYZING":
-      return { label: "ANALYZING", disabled: false, variant: "idle" };
-    case "INDEXING":
-      return {
-        label: status === "INDEXING" ? "PROCESSING" : status,
-        disabled: true,
-        variant: "active",
-      };
-
-    case "READY":
-      return { label: "MONITORING", disabled: true, variant: "active" };
-
-    case "FAILED":
-      return { label: "RETRY", disabled: false, variant: "error" };
-
-    default:
-      return { label: "CONNECT", disabled: false, variant: "idle" };
-  }
-}
 
 export default function Dashboard() {
   const { data: session, status } = useSession();
@@ -112,9 +84,8 @@ export default function Dashboard() {
             return repo;
           })
         );
-      } catch (e) {
-      }
-    }, 2000);
+      } catch (e) {}
+    }, 5000);
 
     return () => {
       console.log("💤 Polling stopped (No active jobs)");
@@ -252,13 +223,12 @@ export default function Dashboard() {
               target="_blank"
               className="flex items-center gap-3 p-2 border border-dashed border-neutral-700 rounded text-neutral-500 hover:text-white hover:border-neutral-500 transition-colors"
             >
-              <Plus size={14} /> Add Installation
+              <Plus size={14} /> Add organization
             </a>
           </div>
         </div>
       </aside>
 
-      {/* --- MAIN CONTENT --- */}
       <main className="flex-1 p-8 overflow-y-auto">
         {!session ? (
           <Card className="max-w-md mx-auto mt-40 p-6 bg-[#1c1c1c] border-neutral-800 text-center">
@@ -314,8 +284,6 @@ export default function Dashboard() {
   );
 }
 
-// --- Sub Components ---
-
 type RepoCardProps = {
   repo: any;
   onConnect: () => void;
@@ -330,16 +298,67 @@ const RepoCard: React.FC<RepoCardProps> = ({
   loading,
 }) => {
   const action = repoAction(repo.status);
+  const repoId = `${repo.owner.login}/${repo.name}`;
 
-  const handleAction = () => {
-    if (
-      repo.status === "FAILED" ||
-      repo.status === "PAUSED" ||
-      !action.disabled
-    ) {
-      onConnect();
+  const handlePause = async () => {
+    try {
+      const r = await fetch("/api/repos/pause", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: repoId }),
+      });
+
+      const data = await r.json();
+      if (!r.ok) {
+        toast({
+          type: "error",
+          message: data?.error || "Failed to pause repository",
+        });
+        return;
+      }
+      toast({ type: "success", message: "Repository paused successfully" });
+    } catch {
+      toast({ type: "error", message: "Network error while pausing repo" });
     }
   };
+
+  const toast = useToast();
+
+  const handleResume = async () => {
+    try {
+      const r = await fetch("/api/repos/resume", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: repoId }),
+      });
+
+      const data = await r.json();
+      if (!r.ok) {
+        toast({
+          type: "error",
+          message: data?.error || "Failed to resume repository",
+        });
+        return;
+      }
+      toast({ type: "success", message: "Repository resumed successfully" });
+    } catch {
+      toast({ type: "error", message: "Network error while resuming repo" });
+      alert("Network error while resuming repo");
+    }
+  };
+
+  const handlePrimaryAction = () => {
+    if (repo.status === "FAILED" || repo.status === "DISCONNECTED") {
+      onConnect();
+      return;
+    }
+
+    if (repo.status === "PAUSED") {
+      handleResume();
+      return;
+    }
+  };
+
   return (
     <Card className="p-3 bg-[#161616] border-neutral-800 hover:border-neutral-700 transition-colors flex flex-col justify-between h-36">
       <div className="flex items-start justify-between gap-2">
@@ -368,6 +387,12 @@ const RepoCard: React.FC<RepoCardProps> = ({
               <Badge className="text-[9px] bg-green-900/20 p-2 text-green-400">
                 <CheckCircle2 size={10} className="mr-1" /> MONITORING
               </Badge>
+
+              <button onClick={handlePause}>
+                <Badge className="text-[9px] bg-yellow-900/20 py-2 px-4 text-yellow-400">
+                  <Pause size={10} className="mr-1" /> PAUSE
+                </Badge>
+              </button>
             </div>
 
             <button
@@ -379,7 +404,7 @@ const RepoCard: React.FC<RepoCardProps> = ({
           </div>
         ) : (
           <button
-            onClick={handleAction}
+            onClick={handlePrimaryAction}
             disabled={action.disabled || loading}
             className={cn(
               "px-2 py-1 text-[10px] font-mono border rounded transition-colors",
@@ -392,10 +417,57 @@ const RepoCard: React.FC<RepoCardProps> = ({
                 "border-red-700 text-red-400 hover:bg-red-900/20"
             )}
           >
-            {loading ? "CONNECTING" : action.label}
+            {loading ? "WORKING" : action.label}
           </button>
         )}
       </div>
     </Card>
   );
 };
+
+function repoAction(status: string): Action {
+  switch (status) {
+    case "PAUSED":
+      return {
+        label: "RESUME",
+        disabled: false,
+        variant: "idle",
+      };
+
+    case "FAILED":
+      return {
+        label: "RETRY",
+        disabled: false,
+        variant: "error",
+      };
+
+    case "QUEUED":
+      return {
+        label: "QUEUED",
+        disabled: true,
+        variant: "active",
+      };
+    case "FETCHING":
+    case "ANALYZING":
+    case "INDEXING":
+      return {
+        label: "PROCESSING",
+        disabled: true,
+        variant: "active",
+      };
+
+    case "READY":
+      return {
+        label: "MONITORING",
+        disabled: true,
+        variant: "active",
+      };
+
+    default:
+      return {
+        label: "CONNECT",
+        disabled: false,
+        variant: "idle",
+      };
+  }
+}
