@@ -109,6 +109,17 @@ func HandlePREvent(ctx context.Context, ev PREvent, token string) {
 		updateComment(ctx, client, ev, commentID, "❌ Failed to generate AI summary.")
 		return
 	}
+
+	log.Println("💾 Logging Sentinel Response to Database...")
+	go func() {
+		dbErr := recordSentinelEvent(ev, finalComment)
+		if dbErr != nil {
+			log.Printf("❌ [Error] Failed to log DB event: %v", dbErr)
+		} else {
+			log.Println("✅ DB Event logged successfully")
+		}
+	}()
+
 	log.Println("✅ AI response generated")
 
 	log.Println("📝 Updating GitHub comment with final report...")

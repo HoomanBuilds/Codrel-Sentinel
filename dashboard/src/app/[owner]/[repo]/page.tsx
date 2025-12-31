@@ -17,6 +17,7 @@ import {
   Pie,
   Cell,
   Line,
+  LineChart,
 } from "recharts";
 import {
   User,
@@ -34,30 +35,11 @@ import {
   CheckCircle2,
   AlertCircle,
   ExternalLink,
+  Zap,
 } from "lucide-react";
 import { Card, Badge, cn } from "@/components/ui/primitives";
-import { useState } from "react";
+import { Activity, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useToast } from "@/components/ui/toast";
-
-const botVerdicts = [
-  { name: "Clean", value: 1 },
-  { name: "Warnings", value: 0 },
-  { name: "Blocked", value: 0 },
-];
-
-const BOT_COLORS = ["#4caf50", "#ffd369", "#ff6b6b"];
-
-const repoMeta = {
-  name: "mockREPO",
-  description:
-    "mock repo for sentinel test",
-  stars: 1,
-  watchers: 0,
-  forks: 0,
-  visibility: "private",
-  language: "TypeScript",
-};
 
 const README = `
 # Sentinel Core
@@ -71,42 +53,71 @@ Sentinel listens to GitHub webhooks and analyzes:
 
 Every analysis run is correlated with repo size and PR activity.
 `;
-const events = Array.from({ length: 3 }).map((_, i) => ({
-  ts: Date.now() - i * 60000,
-  event:
-    i % 3 === 0
-      ? "pr_rejected"
-      : i % 3 === 1
-      ? "pr_reverted"
-      : "workflow_crash",
-  projectId: "mockREPO",
-  metadata: {
-    latency_ms: 180 + i * 12,
-    files: 10 + i,
-    verdict: i % 4 === 0 ? "blocked" : "ok",
-  },
-  success: i % 4 !== 0,
-}));
-
-
 
 export default function RepoAnalyticsPage() {
-   const params = useParams<{ owner: string; repo: string }>();
+  const params = useParams<{ owner: string; repo: string }>();
   const { data: session } = useSession();
-  const [showEvent, setShowEvent] = useState(10);
   const router = useRouter();
+
+  const [loading, setLoading] = useState(true);
+  const [graphData, setGraphData] = useState<any[]>([]);
+  const [events, setEvents] = useState<any[]>([]);
+  const [showEvent, setShowEvent] = useState(10);
+
+  const [repoMeta, setRepoMeta] = useState<any>({
+    name: params.repo,
+    description: "Loading...",
+    stars: 0,
+    watchers: 0,
+    forks: 0,
+    visibility: "...",
+    language: "...",
+    readme: "Loading README...",
+  });
+
+  useEffect(() => {
+    if (!params.owner || !params.repo) return;
+
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const res = await fetch(
+          `/api/repos/${params.owner}/${params.repo}/stats`
+        );
+
+        if (!res.ok) throw new Error("Failed to fetch stats");
+
+        const data = await res.json();
+
+        if (data.graphData) setGraphData(data.graphData);
+        if (data.events) setEvents(data.events);
+
+        if (data.meta) {
+          setRepoMeta(data.meta);
+        }
+      } catch (err) {
+        console.error("Error fetching repo analytics:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [params.owner, params.repo]);
 
   const handlePause = async () => {
     try {
-      const r = await fetch("/api/repos/pause", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: `${params.owner}/${params.repo}` }),
-    });
-    router.push("/dashboard")
-  } catch {
-  }
-}
+      await fetch("/api/repos/pause", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: `${params.owner}/${params.repo}` }),
+      });
+      router.push("/dashboard");
+    } catch {
+      // Handle error
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-neutral-200 font-mono flex">
       <aside className="w-72 border-r border-neutral-800 p-5 space-y-6">
@@ -137,14 +148,14 @@ export default function RepoAnalyticsPage() {
           </div>
 
           <Card className="p-3 rounded-b-none bg-[#161616] border-neutral-800 space">
-            <div className="text-sm text-white truncate">mockREPO</div>
+            <div className="text-sm text-white truncate">{params.repo}</div>
             <div className="text-[10px] text-neutral-500 truncate">
-              vinitngr / mockREPO
+              {params.owner} / {params.repo}
             </div>
 
             <div className="flex gap-2 mt-2">
               <Badge className="text-[9px]">PRIVATE</Badge>
-              <Badge className="text-[9px]">javascript</Badge>
+              <Badge className="text-[9px]">typescript</Badge>
             </div>
           </Card>
           <button
@@ -161,10 +172,7 @@ export default function RepoAnalyticsPage() {
           </div>
 
           <div className="space-y-1 max-h-56 overflow-y-auto">
-            {[
-              "mockREPO",
-              "n8n-tunnel"
-            ].map((repo) => (
+            {["mockREPO", "n8n-tunnel"].map((repo) => (
               <div
                 key={repo}
                 className={cn(
@@ -206,65 +214,283 @@ export default function RepoAnalyticsPage() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KPI icon={GitPullRequest} label="PRs Opened" value="12" />
-          <KPI icon={AlertTriangle} label="Active - Closed Issues" value="2-2" />
-          <KPI icon={AlertTriangle} label="Rejected" value="3" />
-          <KPI icon={FileDiff} label="Files Touched" value="56" />
-        </div>
+          <KPI
+            icon={GitPullRequest}
+            label="Rejected PRs"
+            value={
+              events.filter((e: any) => e.eventType === "rejected_pr").length
+            }
+          />
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-          <Card className="p-4 bg-[#1c1c1c] border-neutral-800 xl:col-span-2">
-            <Section title="PR Lifecycle">
-              <AreaChartBlock />
+          <KPI
+            icon={Zap}
+            label="Workflow Crashes"
+            value={
+              events.filter((e: any) => e.eventType === "workflow_crash").length
+            }
+          />
+
+          <KPI
+            icon={AlertTriangle}
+            label="Critical Alerts"
+            value={
+              events.filter(
+                (e: any) =>
+                  e.severityLabel === "critical" || e.severityLabel === "high"
+              ).length
+            }
+          />
+
+          <KPI icon={Activity} label="Total Signals" value={events.length} />
+        </div>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <Card className="p-4 bg-[#1c1c1c] border-neutral-800">
+            <Section title="PR Risks (Reverted & Rejected)">
+              <div className="h-full w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={graphData}>
+                    <CartesianGrid stroke="#222" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fill: "#666", fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tick={{ fill: "#666", fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#111",
+                        border: "1px solid #333",
+                      }}
+                      itemStyle={{ fontSize: "11px" }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="reverted"
+                      stackId="1"
+                      stroke="#ffb74d"
+                      fill="#ffb74d"
+                      fillOpacity={0.2}
+                      name="Reverted"
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="rejected"
+                      stackId="1"
+                      stroke="#ef5350"
+                      fill="#ef5350"
+                      fillOpacity={0.2}
+                      name="Rejected"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
             </Section>
           </Card>
 
           <Card className="p-4 bg-[#1c1c1c] border-neutral-800">
-            <Section title="Sentinel Bot Verdicts">
-              <BotPie />
+            <Section title="Workflow Crashes">
+              <div className="h-full w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={graphData}>
+                    <CartesianGrid stroke="#222" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fill: "#666", fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tick={{ fill: "#666", fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#111",
+                        border: "1px solid #333",
+                      }}
+                      cursor={{ fill: "#ffffff10" }}
+                    />
+                    <Bar
+                      dataKey="crashes"
+                      fill="#ff6b6b"
+                      radius={[4, 4, 0, 0]}
+                      name="Crashes"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Section>
+          </Card>
+
+          <Card className="p-4 bg-[#1c1c1c] border-neutral-800">
+            <Section title="Architecture Changes">
+              <div className="h-full w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={graphData}>
+                    <CartesianGrid stroke="#222" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fill: "#666", fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tick={{ fill: "#666", fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+
+                    <Tooltip
+                      content={({ active, payload, label }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-[#0a0a0a] border border-neutral-800 p-3 rounded shadow-xl min-w-[200px]">
+                              <div className="text-[10px] font-bold text-neutral-300 mb-2 border-b border-neutral-800 pb-1">
+                                {label}
+                              </div>
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-2 h-2 rounded-full bg-[#29b6f6]" />
+                                <span className="text-xs text-neutral-200">
+                                  {data.architecture} Changes
+                                </span>
+                              </div>
+
+                              {data.archFiles && data.archFiles.length > 0 && (
+                                <div className="space-y-1 mt-2">
+                                  <div className="text-[9px] text-neutral-500 uppercase">
+                                    Files Modified:
+                                  </div>
+                                  {data.archFiles.map(
+                                    (file: string, idx: number) => (
+                                      <div
+                                        key={idx}
+                                        className="text-[10px] text-neutral-400 font-mono break-all leading-tight"
+                                      >
+                                        • {file}
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="architecture"
+                      stroke="#29b6f6"
+                      strokeWidth={2}
+                      dot={{ r: 4, fill: "#29b6f6", strokeWidth: 0 }}
+                      activeDot={{ r: 6, stroke: "#fff", strokeWidth: 2 }}
+                      name="Arch Changes"
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </Section>
+          </Card>
+
+          <Card className="p-4 bg-[#1c1c1c] border-neutral-800">
+            <Section title="Sentinel Bot Activity">
+              <div className="h-full w-full">
+                {graphData.reduce(
+                  (acc, curr) => acc + (curr.botActivity || 0),
+                  0
+                ) === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-neutral-600 space-y-3">
+                    <div className="p-3 bg-neutral-900 rounded-full border border-neutral-800">
+                      <Bot size={20} className="text-neutral-500 opacity-50" />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-[10px] text-neutral-500 uppercase tracking-widest font-semibold">
+                        No Activity Detected
+                      </div>
+                      <div className="text-[9px] text-neutral-600 mt-1 max-w-[150px] mx-auto leading-tight">
+                        Sentinel Bot has not triggered on any PRs in the last 7
+                        days.
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={graphData}>
+                      <CartesianGrid stroke="#222" vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fill: "#666", fontSize: 10 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tick={{ fill: "#666", fontSize: 10 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#111",
+                          border: "1px solid #333",
+                        }}
+                        cursor={{ fill: "#ffffff10" }}
+                      />
+                      <Bar
+                        dataKey="botActivity"
+                        fill="#4caf50"
+                        radius={[4, 4, 0, 0]}
+                        name="Bot Responses"
+                        barSize={30}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
             </Section>
           </Card>
         </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card className="p-4 bg-[#1c1c1c] border-neutral-800">
-            <Section title="Repo Analysis Latency (per run)">
-              <LatencyScatter />
-            </Section>
-          </Card>
-
-          <Card className="p-4 bg-[#1c1c1c] border-neutral-800">
-            <Section title="Files Changed (push events)">
-              <FileBar />
-            </Section>
-          </Card>
-        </div>
-
         <Card className="p-5 bg-[#1c1c1c] border-neutral-800 space-y-4">
-          <div className="flex justify-between">
-            <div>
-              <div className="text-sm text-white">{repoMeta.name}</div>
-              <div className="text-xs text-neutral-500">
+          <div className="flex justify-between items-start">
+            <div className="max-w-[80%]">
+              <div className="text-sm text-white font-bold">
+                {repoMeta.name}
+              </div>
+              <div className="text-xs text-neutral-500 line-clamp-2 mt-1">
                 {repoMeta.description}
               </div>
             </div>
-            <Badge className="text-[10px]">{repoMeta.visibility}</Badge>
+            <Badge className="text-[10px] uppercase border-neutral-700 text-neutral-400">
+              {repoMeta.visibility}
+            </Badge>
           </div>
 
-          <div className="flex gap-6 text-[10px] text-neutral-400">
+          <div className="flex gap-6 text-[10px] text-neutral-400 border-b border-neutral-800 pb-4">
             <Meta icon={Star} label="Stars" value={repoMeta.stars} />
             <Meta icon={Eye} label="Watchers" value={repoMeta.watchers} />
             <Meta icon={GitBranch} label="Forks" value={repoMeta.forks} />
             <Meta icon={Bot} label="Lang" value={repoMeta.language} />
           </div>
 
-          <div className="pt-4 border-t border-neutral-800">
-            <div className="text-[10px] uppercase text-neutral-500 mb-2">
-              README
+          <div className="pt-2">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="text-[10px] uppercase text-neutral-500 font-bold tracking-wider">
+                README.md
+              </div>
             </div>
-            <pre className="text-[11px] text-neutral-300 whitespace-pre-wrap">
-              {README}
-            </pre>
+            <div className="bg-[#111] rounded p-3 border border-neutral-800 max-h-64 overflow-y-auto custom-scrollbar">
+              <pre className="text-[10px] text-neutral-400 whitespace-pre-wrap font-mono leading-relaxed">
+                {repoMeta.readme}
+              </pre>
+            </div>
           </div>
         </Card>
 
@@ -282,38 +508,77 @@ export default function RepoAnalyticsPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="text-[10px] uppercase text-neutral-500 border-b border-neutral-800">
+                <tr className="text-[10px] uppercase text-neutral-500 border-b border-neutral-800 text-left">
                   <th className="p-3 pl-4">Timestamp</th>
                   <th className="p-3">Event</th>
-                  <th className="p-3">Project</th>
-                  <th className="p-3">Latency</th>
-                  <th className="p-3">Status</th>
+                  <th className="p-3">File</th>
+                  <th className="p-3">Severity</th>
                 </tr>
               </thead>
               <tbody className="text-xs divide-y divide-neutral-800/50">
-                {events.slice(0, showEvent).map((e, i) => (
-                  <tr key={i} className="hover:bg-white/5">
-                    <td className="p-3 pl-4 text-neutral-500">
-                      {new Date(e.ts).toLocaleTimeString()}
-                    </td>
-                    <td className="p-3">{e.event}</td>
-                    <td className="p-3 text-neutral-400">{e.projectId}</td>
-                    <td className="p-3 text-neutral-400">
-                      {e.metadata.latency_ms} ms
-                    </td>
-                    <td className="p-3">
-                      {e.success ? (
-                        <span className="flex items-center gap-1 text-green-500">
-                          <CheckCircle2 size={12} /> OK
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1 text-red-500">
-                          <AlertCircle size={12} /> ERR
-                        </span>
-                      )}
+                {events.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="p-8 text-center text-neutral-600"
+                    >
+                      No events found
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  events.slice(0, showEvent).map((e: any, i: number) => (
+                    <tr key={i} className="hover:bg-white/5 transition-colors">
+                      <td className="p-3 pl-4 text-neutral-500 font-mono">
+                        {new Date(e.createdAt).toLocaleTimeString([], {
+                          hour12: false,
+                        })}
+                      </td>
+
+                      <td className="p-3">
+                        <span
+                          className={cn(
+                            "px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide border",
+                            e.eventType === "workflow_crash"
+                              ? "bg-red-500/10 text-red-400 border-red-500/20"
+                              : e.eventType === "architecture"
+                              ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                              : e.eventType === "rejected_pr"
+                              ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
+                              : e.eventType === "sentinel_response"
+                              ? "bg-green-500/10 text-green-400 border-green-500/20"
+                              : "bg-neutral-800 text-neutral-400 border-neutral-700"
+                          )}
+                        >
+                          {e.eventType?.replace("_", " ")}
+                        </span>
+                      </td>
+
+                      <td
+                        className="p-3 text-neutral-400 font-mono text-[11px] truncate max-w-[200px]"
+                        title={e.filePath}
+                      >
+                        {e.filePath}
+                      </td>
+
+                      <td className="p-3">
+                        {e.severityLabel === "critical" ||
+                        e.severityLabel === "high" ? (
+                          <span className="flex items-center gap-1 text-red-500 font-bold text-[10px] uppercase">
+                            <AlertCircle size={12} /> {e.severityLabel}
+                          </span>
+                        ) : e.severityLabel === "medium" ? (
+                          <span className="flex items-center gap-1 text-yellow-500 text-[10px] uppercase">
+                            <AlertTriangle size={12} /> {e.severityLabel}
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-green-500 text-[10px] uppercase">
+                            <CheckCircle2 size={12} /> {e.severityLabel || "OK"}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -339,74 +604,6 @@ const Section = ({ title, children }: any) => (
   </>
 );
 
-const AreaChartBlock = () => (
-  <ResponsiveContainer width="100%" height="100%">
-    <AreaChart data={prTimeline}>
-      <CartesianGrid stroke="#222" />
-      <XAxis dataKey="t" tick={{ fill: "#666", fontSize: 10 }} />
-      <YAxis tick={{ fill: "#666", fontSize: 10 }} />
-      <Tooltip />
-      <Area dataKey="opened" stackId="1" stroke="#29b6f6" fill="#29b6f6" />
-      {/* <Area dataKey="merged" stackId="1" stroke="" fill="#29b6f6" /> */}
-      <Area dataKey="merged" stackId="1" stroke="#4caf50" fill="#4caf50" />
-      <Area dataKey="rejected" stackId="1" stroke="#ff6b6b" fill="#ff6b6b" />
-    </AreaChart>
-  </ResponsiveContainer>
-);
-
-const LatencyScatter = () => (
-  <ResponsiveContainer width="100%" height="100%">
-    <ScatterChart>
-      <CartesianGrid stroke="#222" />
-      <XAxis dataKey="files" name="Files" />
-      <YAxis dataKey="latency" name="Latency" unit="ms" />
-      <Tooltip
-        cursor={{ strokeDasharray: "3 3" }}
-        content={({ payload }) => {
-          if (!payload || !payload.length) return null;
-          const d = payload[0].payload;
-          return (
-            <div className="bg-[#111] border border-neutral-700 p-2 text-[10px]">
-              <div>Latency: {d.latency}ms</div>
-              <div>Files: {d.files}</div>
-              <div>PRs: {d.prs}</div>
-              <div>Parse: {d.parse}ms</div>
-              <div>Analyze: {d.analyze}ms</div>
-              <div>Index: {d.index}ms</div>
-            </div>
-          );
-        }}
-      />
-      <Scatter data={analysisRuns} fill="#ffa726" />
-    </ScatterChart>
-  </ResponsiveContainer>
-);
-
-const FileBar = () => (
-  <ResponsiveContainer width="100%" height="100%">
-    <BarChart data={fileChurn}>
-      <CartesianGrid stroke="#222" />
-      <XAxis dataKey="t" tick={{ fill: "#666", fontSize: 10 }} />
-      <YAxis tick={{ fill: "#666", fontSize: 10 }} />
-      <Tooltip />
-      <Bar dataKey="files" fill="#ffd369" />
-    </BarChart>
-  </ResponsiveContainer>
-);
-
-const BotPie = () => (
-  <ResponsiveContainer width="100%" height="100%">
-    <PieChart>
-      <Pie data={botVerdicts} innerRadius={50} outerRadius={80} dataKey="value">
-        {botVerdicts.map((_, i) => (
-          <Cell key={i} fill={BOT_COLORS[i]} />
-        ))}
-      </Pie>
-      <Tooltip />
-    </PieChart>
-  </ResponsiveContainer>
-);
-
 const KPI = ({ icon: Icon, label, value }: any) => (
   <Card className="p-4 bg-[#1c1c1c] border-neutral-800">
     <div className="flex items-center gap-2 text-[10px] text-neutral-500 uppercase">
@@ -424,129 +621,3 @@ const Meta = ({ icon: Icon, label, value }: any) => (
     <span className="text-neutral-200">{value}</span>
   </div>
 );
-
-
-export const prTimeline = [
-  {
-    "t": "Wed",
-    "opened": 0,
-    "rejected": 0,
-    "reverted": 0,
-    "merged" : 0
-  },
-  {
-    "t": "Thu",
-    "opened": 0,
-    "rejected": 0,
-    "reverted": 0,
-    "merged": 0
-  },
-  {
-    "t": "Fri",
-    "opened": 0,
-    "rejected": 0,
-    "reverted": 0,
-    "merged": 0
-  },
-  {
-    "t": "Sat",
-    "opened": 0,
-    "rejected": 0,
-    "reverted": 0,
-    "merged": 0
-  },
-  {
-    "t": "Sun",
-    "opened": 12,
-    "rejected": 3,
-    "reverted": 1,
-    "merged": 7
-  },
-  {
-    "t": "Mon",
-    "opened": 0,
-    "rejected": 0,
-    "reverted": 0,
-    "merged": 0
-  },
-  {
-    "t": "Tue",
-    "opened": 0,
-    "rejected": 0,
-    "reverted": 0,
-    "merged": 2
-  }
-];
-
-
-
-const analysisRuns = [
-  {
-    run: 0,
-    latency: 180,
-    files: 12,
-    prs: 1,
-    parse: 30,
-    analyze: 90,
-    index: 60,
-  },
-  {
-    run: 0,
-    latency: 420,
-    files: 84,
-    prs: 3,
-    parse: 70,
-    analyze: 240,
-    index: 110,
-  },
-  {
-    run: 0,
-    latency: 260,
-    files: 31,
-    prs: 2,
-    parse: 40,
-    analyze: 140,
-    index: 80,
-  },
-  {
-    run: 0,
-    latency: 610,
-    files: 140,
-    prs: 6,
-    parse: 120,
-    analyze: 360,
-    index: 130,
-  },
-];
-
-export const fileChurn = [
-  {
-    "t": "Sun",
-    "files": 55
-  },
-  {
-    "t": "Mon",
-    "files": 0
-  },
-  {
-    "t": "Tue",
-    "files": 1
-  },
-  {
-    "t": "Wed",
-    "files": 0
-  },
-  {
-    "t": "Thu",
-    "files": 0
-  },
-  {
-    "t": "Fri",
-    "files": 0
-  },
-  {
-    "t": "Sat",
-    "files": 0
-  }
-];
-

@@ -37,7 +37,6 @@ const AnalysisSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 
-
 type Analysis = z.infer<typeof AnalysisSchema>;
 
 const CrashJSONSchema = {
@@ -46,8 +45,14 @@ const CrashJSONSchema = {
     main_cause_file: { type: "string" },
     cause_files: { type: "array", items: { type: "string" } },
 
-    critical_score: { type: "number" },
-    critical_label: { type: "string", enum: ["low","medium","high","critical"] },
+    critical_score: { 
+      type: "number",
+      description: "A float value between 0.0 and 1.0 representing severity (e.g. 0.95).",
+    },
+    critical_label: {
+      type: "string",
+      enum: ["low", "medium", "high", "critical"],
+    },
     critical_reason: { type: "string" },
 
     root_reason: { type: "string" },
@@ -62,7 +67,7 @@ const CrashJSONSchema = {
       items: {
         type: "object",
         properties: { file: { type: "string" }, snippet: { type: "string" } },
-        required: ["file","snippet"],
+        required: ["file", "snippet"],
       },
     },
     code_update_suggestion: {
@@ -70,11 +75,14 @@ const CrashJSONSchema = {
       items: {
         type: "object",
         properties: { file: { type: "string" }, patch: { type: "string" } },
-        required: ["file","patch"],
+        required: ["file", "patch"],
       },
     },
 
-    confidence: { type: "number" },
+    confidence: { 
+      type: "number",
+      description: "Confidence score between 0.0 and 1.0.",
+    },
   },
   required: [
     "main_cause_file",
@@ -108,17 +116,25 @@ Commit: "${crash.commit_msg}" (${crash.head_sha})
 ${crash.error_signature}
 
 --- 2. RELEVANT LOG LINES ---
-${crash.error_lines.join("\n")}
+${
+  Array.isArray(crash.error_lines)
+    ? crash.error_lines.join("\n")
+    : "No error lines available"
+}
 
 --- 3. RECENT CODE CHANGES (The Potential Cause) ---
-${crash.change.files
-  .map(
-    (f: any) =>
-      `>>> FILE: ${f.filename}\n${
-        f.patch ? f.patch.slice(0, 2000) : "(No patch content)"
-      }`
-  )
-  .join("\n\n")}
+${
+  Array.isArray(crash.change?.files)
+    ? crash.change.files
+        .map(
+          (f: any) =>
+            `>>> FILE: ${f.filename}\n${
+              f.patch ? f.patch.slice(0, 2000) : "(No patch content)"
+            }`
+        )
+        .join("\n\n")
+    : "(No changed files available)"
+}
 
 --- ANALYSIS INSTRUCTIONS ---
 1. CORRELATION CHECK: specifically look for error line numbers in the logs that match lines modified in the 'Code Changes'.
@@ -130,26 +146,10 @@ Return STRICT JSON. Ensure "rag_summary" is optimized for vector search (include
 `;
 }
 
-async function analyzeCrash(repo: string, crash: any) {
-  const prompt = buildPrompt(repo, crash);
-  return withGeminiLimit(async () => {
-    const LOCAL_MODEL = null;
-    const rawText = await generateText(
-      LOCAL_MODEL || GLOBAL_MODEL || "gemini-2.0-flash",
-      prompt,
-      CrashJSONSchema
-    );
-
-    if (!rawText) {
-      throw new Error("Gemini returned an empty response");
-    }
-
-    const parsedJson = JSON.parse(rawText);
-    return AnalysisSchema.parse(parsedJson);
-  });
-}
-
-export async function processWorkflowCrash(msg: KafkaMessage , eventBuffer: FileRiskEvent[]) {
+export async function processWorkflowCrash(
+  msg: KafkaMessage,
+  eventBuffer: FileRiskEvent[]
+) {
   const payload = JSON.parse(msg.value!.toString());
   const repo = payload.repo;
   const crashes = payload.workflow_crash?.Crash ?? [];
@@ -169,9 +169,8 @@ export async function processWorkflowCrash(msg: KafkaMessage , eventBuffer: File
 
   for (const crash of crashes) {
     log("workflow", `analyzing crash=${crash.id}`);
-
     try {
-      const result = await analyzeCrash(repo, crash);
+      const result = await withGeminiLimit(() => analyzeCrashOnce(repo, crash));
 
       const vectorText = `
 RAG Summary:
@@ -185,11 +184,13 @@ ${result.detailed_explanation}
 
 Fix Summary:
 
-Code cause issue:
-${result.code_causing_issue}
+Code causing issue:
+${result.code_causing_issue.map((c) => `${c.file}:\n${c.snippet}`).join("\n\n")}
 
-Code update Suggestion
-${result.code_update_suggestion}
+Code update suggestion:
+${result.code_update_suggestion
+  .map((c) => `${c.file}:\n${c.patch}`)
+  .join("\n\n")}
 
 Keywords:
 ${result.keywords.join(", ")}
@@ -214,8 +215,16 @@ ${result.keywords.join(", ")}
 
       eventBuffer.push({
         repo,
-        file_path: result.main_cause_file,
-        affected_files: result.cause_files,
+        file_path:
+          typeof result.main_cause_file === "string" &&
+          result.main_cause_file.length > 0
+            ? result.main_cause_file
+            : "unknown",
+
+        affected_files: Array.isArray(result.cause_files)
+          ? result.cause_files
+          : [],
+
         event_type: "workflow_crash",
         event_source_id: String(crash.id),
 
@@ -225,11 +234,22 @@ ${result.keywords.join(", ")}
         keywords: result.keywords,
         summary: result.short_explanation,
 
-        raw_payload: result,
+        raw_payload: JSON.stringify(result),
         created_at: crash.created_at,
       });
-    } catch (e) {
-      log("workflow", `failed to analyze crash ${crash.id}: ${e}`);
+    } catch (e: any) {
+      if (e.type === "RATE_LIMIT") {
+        log("workflow", `Gemini quota hit | crash=${crash.id}`);
+        continue;
+      }
+
+      if (e instanceof SyntaxError) {
+        log("workflow", `Invalid JSON | crash=${crash.id}`);
+        continue;
+      }
+
+      log("workflow", `AI failure | crash=${crash.id} err=${e}`);
+      continue;
     }
   }
 
@@ -238,4 +258,17 @@ ${result.keywords.join(", ")}
   }
 
   log("workflow", `completed | repo=${repo} vectors=${vectors.length}`);
+}
+
+async function analyzeCrashOnce(repo: string, crash: any): Promise<Analysis> {
+  const prompt = buildPrompt(repo, crash);
+
+  const rawText = await generateText(
+    GLOBAL_MODEL || "gemini-2.0-flash-lite",
+    prompt,
+    CrashJSONSchema
+  );
+
+  const parsedJson = JSON.parse(rawText);
+  return AnalysisSchema.parse(parsedJson);
 }

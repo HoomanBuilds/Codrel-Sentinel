@@ -1,22 +1,41 @@
 import { getRepoInstallationToken } from "@/lib/github";
 import { Kafka } from "kafkajs";
+
 export const runtime = "nodejs";
 
+// --- 1. GLOBAL SINGLETON SETUP (Prevents disconnection on reload) ---
 const kafka = new Kafka({
   clientId: "sentinel-webhook",
   brokers: [process.env.KAFKA_BROKER || "localhost:9092"],
 });
 
-const producer = kafka.producer();
-let producerReady = true;
+declare global {
+  var kafkaProducer: any;
+}
 
-async function ensureProducer() {
-  if (!producerReady) {
+let producer: any;
+
+if (process.env.NODE_ENV === "production") {
+  producer = kafka.producer();
+} else {
+  if (!global.kafkaProducer) {
+    global.kafkaProducer = kafka.producer();
+  }
+  producer = global.kafkaProducer;
+}
+
+// --- 2. CONNECTION HELPER ---
+async function ensureConnected() {
+  try {
+    // This is safe to call even if already connected
     await producer.connect();
-    producerReady = true;
+  } catch (err) {
+    // If it throws, it usually means "already connected" or "connecting", which is fine.
+    // We ignore the error to allow the send() to attempt.
   }
 }
 
+// --- 3. CRYPTO HELPERS ---
 async function hmacSHA256Hex(body: ArrayBuffer, secret: string): Promise<string> {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -41,24 +60,19 @@ function timingSafeEqual(a: string, b: string): boolean {
   return out === 0;
 }
 
+// --- 4. MAIN HANDLER ---
 export async function POST(req: Request): Promise<Response> {
   try {
     const secret = process.env.GITHUB_WEBHOOK_SECRET;
-    if (!secret) {
-      return new Response("Secret missing", { status: 500 });
-    }
+    if (!secret) return new Response("Secret missing", { status: 500 });
 
     const signature = req.headers.get("x-hub-signature-256");
-    if (!signature) {
-      return new Response("No signature", { status: 401 });
-    }
+    if (!signature) return new Response("No signature", { status: 401 });
 
     const body = await req.arrayBuffer();
     const digest = `sha256=${await hmacSHA256Hex(body, secret)}`;
 
-    if (!timingSafeEqual(digest, signature)) {
-      return new Response("Invalid signature", { status: 401 });
-    }
+    if (!timingSafeEqual(digest, signature)) return new Response("Invalid signature", { status: 401 });
 
     const contentType = req.headers.get("content-type") || "";
     let payload: any;
@@ -75,9 +89,8 @@ export async function POST(req: Request): Promise<Response> {
 
     const event = req.headers.get("x-github-event") || "unknown";
 
-    if (event === "ping") {
-      return Response.json({ ok: true });
-    }
+    if (event === "ping") return Response.json({ ok: true });
+
     if (
       event === "pull_request" &&
       (payload.action === "opened" || payload.action === "synchronize" || payload.action === "reopened")
@@ -90,14 +103,17 @@ export async function POST(req: Request): Promise<Response> {
           number : ${payload.number}
         `);
       try {
-        await ensureProducer();
+        // --- KEY FIX HERE: CONNECT BEFORE SENDING ---
+        await ensureConnected(); 
 
         const installationId = payload.installation?.id;
         if (!installationId) {
-            console.error("No installation ID found in webhook payload");
+            console.error("No installation ID found");
             return new Response("Missing installation ID", { status: 400 });
         }
+        
         const accessToken = await getRepoInstallationToken(Number(installationId));
+        
         const kafkaPayload = {
           owner: payload.repository.owner.login,
           repo: payload.repository.name,
@@ -107,16 +123,13 @@ export async function POST(req: Request): Promise<Response> {
 
         await producer.send({
           topic: "sentinelbot.events",
-          messages: [
-            {
-              value: JSON.stringify(kafkaPayload),
-            },
-          ],
+          messages: [{ value: JSON.stringify(kafkaPayload) }],
         });
 
         console.log(`[Sentinel] Queued PR analysis for ${kafkaPayload.repo}#${kafkaPayload.pr_number}`);
       } catch (kafkaErr) {
         console.error("Kafka Producer Error:", kafkaErr);
+        // Don't crash the webhook response, just log the error
       }
     }
 

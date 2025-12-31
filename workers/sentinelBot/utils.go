@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/go-github/v61/github"
+	_ "github.com/lib/pq"
 )
 
 func callRiskAPI(
@@ -114,4 +116,51 @@ func truncate(s string, max int) string {
 
 func itoa(i int) string {
 	return strconv.FormatInt(int64(i), 10)
+}
+
+func getDB() (*sql.DB, error) {
+	connStr := os.Getenv("DATABASE_URL")
+	return sql.Open("postgres", connStr)
+}
+
+func recordSentinelEvent(ev PREvent, summary string) error {
+	db, err := getDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	query := `
+		INSERT INTO repo_file_events (
+			repo, 
+			file_path, 
+			event_type, 
+			severity_score, 
+			severity_label, 
+			created_at, 
+			raw_payload
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+
+	repoName := fmt.Sprintf("%s/%s", ev.Owner, ev.Repo)
+	filePath := fmt.Sprintf("PR #%d", ev.PRNumber)
+	eventType := "sentinel_response"
+	severityScore := 0.0
+	severityLabel := "low"
+	createdAt := time.Now()
+
+	payloadMap := map[string]string{"summary": summary}
+	payloadBytes, _ := json.Marshal(payloadMap)
+
+	_, err = db.Exec(query,
+		repoName,
+		filePath,
+		eventType,
+		severityScore,
+		severityLabel,
+		createdAt,
+		payloadBytes,
+	)
+
+	return err
 }

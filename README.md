@@ -1,5 +1,5 @@
 
-
+![alt text](./assets/poster.png)
 # Codrel Sentinel
 
 **A Context & Safety Engine for AI Coding Agents**
@@ -27,6 +27,14 @@ Modern AI coding agents operate in a dangerous blind spot:
   * production incidents
 * Every agent **re-discovers the same mistakes**
 * Context is lost between PRs, tools, and developers
+
+---
+
+## Architecture
+
+![Codrel Sentinel Architecture](./assets/arch.png)
+
+---
 
 ### Real Example
 
@@ -259,13 +267,7 @@ For **critical risk events only**:
 
 Voice is reserved for **high-severity signals**, not noise.
 
----
 
-## Architecture
-
-![Codrel Sentinel Architecture](./assets/arch.png)
-
----
 
 ## What Codrel Sentinel Is (and Is Not)
 

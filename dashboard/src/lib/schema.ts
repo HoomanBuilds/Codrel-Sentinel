@@ -55,6 +55,7 @@ export const repoFileEvents = pgTable(
         | "reverted_pr"
         | "rejected_pr"
         | "architecture"
+        | "sentinel_response"
       >()
       .notNull(),
 

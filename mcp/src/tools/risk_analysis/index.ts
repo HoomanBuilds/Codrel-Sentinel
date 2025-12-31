@@ -1,6 +1,6 @@
 import z from "zod";
-import { callRiskAPI } from "./client";
-import { RiskScoreSchema, RiskFullSchema } from "./schemas";
+import { callRiskAPI } from "./client.js";
+import { RiskScoreSchema, RiskFullSchema } from "./schema.js";
 
 export const getRiskTools = (token: string) => ({
   risk_analysis_score: {

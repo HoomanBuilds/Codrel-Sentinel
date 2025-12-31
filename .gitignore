@@ -16,3 +16,5 @@ infra/datadog-dashboard.json
 
 *.pem
 infra/datadog-monitors.json
+
+vertex.json

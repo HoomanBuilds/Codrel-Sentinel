@@ -421,7 +421,7 @@ const RepoCard: React.FC<RepoCardProps> = ({
               onClick={onActivity}
               className="px-2 py-1 text-[10px] font-mono border border-neutral-800 rounded text-neutral-400 hover:text-white hover:border-neutral-600 transition-colors"
             >
-              Details →
+              Monitor →
             </button>
           </div>
         ) : (

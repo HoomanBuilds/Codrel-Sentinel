@@ -1,5 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 
 export const genai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY!,
+  vertexai: true,  // <--- REQUIRED for Vertex AI
+  project: "ancient-episode-482912-n2",
+  location: "us-central1",
 });

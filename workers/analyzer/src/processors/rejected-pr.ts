@@ -69,67 +69,13 @@ type RejectedPR = {
     diff?: string;
     rejection_reason: string;
     comments: any[];
-    created_at : string;
+    created_at: string;
   };
-
 };
 
 function log(tag: string, msg: string) {
   const time = new Date().toISOString().replace(/T/, " ").replace(/\..+/, "");
   console.log(`${time} [${tag}] ${msg}`);
-}
-
-async function analyzeRejectedPr(item: RejectedPR): Promise<PrAnalysis> {
-  return withGeminiLimit(async () => {
-    const humanComments = item.pr.comments
-      .filter((c: any) => c.author_type !== "bot")
-      .map((c: any) => `${c.author}: "${c.body}"`)
-      .join("\n");
-
-    const prompt = `
-    You are a Senior Engineering Manager performing a "Post-Mortem" on a rejected Pull Request.
-    
-    Analyze why this code was rejected.
-    
-    CONTEXT:
-    - Repo: ${item.repo}
-    - PR Title: ${item.pr.title}
-    - Type: ${item.pr.rejection_reason} rejection
-    
-    PR DESCRIPTION:
-    ${item.pr.body}
-    
-    REJECTION DISCUSSION (Comments):
-    ${
-      humanComments ||
-      "(No human comments found - likely rejected silently or by bot)"
-    }
-    
-    DIFF SNIPPET (What changed):
-    ${item.pr.diff ? item.pr.diff.slice(0, 2000) : "No diff available"}
-    
-    TASK:
-    1. Determine the root cause of rejection.
-    2. Extract lessons learned.
-    3. Return structured JSON.
-    `;
-
-    const SPECIFIC_MODEL = null;
-    const rawText = await generateText(
-      SPECIFIC_MODEL || GLOBAL_MODEL || "gemini-2.0-flash",
-      prompt,
-      RejectJSONSchema
-    );
-
-    if (!rawText) throw new Error("Gemini returned empty response");
-
-    try {
-      return PrAnalysisSchema.parse(JSON.parse(rawText));
-    } catch (e) {
-      console.error("Failed to parse PR Analysis JSON:", rawText);
-      throw e;
-    }
-  });
 }
 
 export async function processRejectedPrs(
@@ -145,8 +91,9 @@ export async function processRejectedPrs(
   const vectorBatch: { id: string; text: string; metadata: any }[] = [];
 
   for (const item of prs) {
+    let analysis: PrAnalysis | null = null;
     try {
-      const analysis = await analyzeRejectedPr(item);
+      analysis = await withGeminiLimit(() => analyzeRejectedPrOnce(item));
 
       const searchableText = `
 PR REJECTED: ${item.pr.title}
@@ -196,12 +143,24 @@ ${item.pr.body.slice(0, 500)}
 
         keywords: analysis.risk_keywords,
         summary: analysis.rejection_reason,
-        raw_payload: analysis,
-        created_at : item.pr.created_at,
+        raw_payload: JSON.stringify(analysis),
+        created_at: item.pr.created_at,
       });
-    } catch (e) {
-      log("pr-processor", `failed to analyze PR #${item.pr.number}: ${e}`);
+    } catch (e: any) {
+      if (e.type === "RATE_LIMIT") {
+        log("pr-processor", `Gemini quota hit | PR=${item.pr.number}`);
+        continue;
+      }
+
+      if (e instanceof SyntaxError) {
+        log("pr-processor", `Invalid JSON | PR=${item.pr.number}`);
+        continue;
+      }
+
+      log("pr-processor", `AI failure | PR=${item.pr.number} err=${e}`);
+      continue;
     }
+    if (!analysis) continue;
   }
 
   if (vectorBatch.length > 0) {
@@ -209,4 +168,43 @@ ${item.pr.body.slice(0, 500)}
   }
 
   log("pr-processor", `completed | repo=${repo} vectors=${vectorBatch.length}`);
+}
+
+async function analyzeRejectedPrOnce(item: RejectedPR): Promise<PrAnalysis> {
+  const comments = Array.isArray(item.pr.comments) ? item.pr.comments : [];
+
+  const humanComments = comments
+    .filter((c: any) => c && c.author_type !== "bot")
+    .map((c: any) => `${c.author ?? "unknown"}: "${c.body ?? ""}"`)
+    .join("\n");
+
+  const prompt = `
+You are a Senior Engineering Manager performing a post-mortem on a rejected PR.
+
+CONTEXT:
+- Repo: ${item.repo}
+- PR Title: ${item.pr.title}
+- Type: ${item.pr.rejection_reason} rejection
+
+PR DESCRIPTION:
+${item.pr.body ? item.pr.body.slice(0, 500) : ""}
+
+COMMENTS:
+${humanComments || "(No human comments found)"}
+
+DIFF:
+${item.pr.diff ? item.pr.diff.slice(0, 2000) : "No diff available"}
+
+TASK:
+Return structured JSON only.
+`;
+
+  const rawText = await generateText(
+    GLOBAL_MODEL || "gemini-2.0-flash-lite",
+    prompt,
+    RejectJSONSchema
+  );
+
+  const parsed = JSON.parse(rawText);
+  return PrAnalysisSchema.parse(parsed);
 }
