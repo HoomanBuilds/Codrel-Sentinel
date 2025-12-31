@@ -19,38 +19,18 @@ async function ensureProducer() {
   }
 }
 
-function verifyDatadogSignature(
-  rawBody: Buffer,
-  signature: string | null
-) {
-  if (!signature) return false;
-
-  const secret = process.env.DATADOG_WEBHOOK_SECRET!;
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(rawBody)
-    .digest("hex");
-
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expected)
-  );
-}
-
 export async function POST(req: Request) {
+  const customSecret = req.headers.get("x-secret");
+  
   const rawBody = Buffer.from(await req.arrayBuffer());
-  const signature = req.headers.get("x-datadog-signature");
-
-  if (!verifyDatadogSignature(rawBody, signature)) {
-    return NextResponse.json(
-      { ok: false, error: "Invalid Datadog signature" },
-      { status: 401 }
-    );
+  if(customSecret !== process.env.DATADOG_WEBHOOK_SECRET) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const payload = JSON.parse(rawBody.toString());
 
   const message =
+    req.headers.get("Message")??
     payload?.title ??
     payload?.body ??
     payload?.alert_title ??
@@ -65,7 +45,7 @@ export async function POST(req: Request) {
   await ensureProducer();
 
   await producer.send({
-    topic: process.env.KAFKA_TOPIC!,
+    topic: "codrel.index.jobs",
     messages: [
       {
         key: event.eventId,
