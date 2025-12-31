@@ -150,16 +150,16 @@ func processMessage(
 	case "connection":
 		log.Println("processing repo:", req.Repo)
 
-		webhookURL := os.Getenv("BACKEND_WEBHOOK_URL")
-		webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
-		log.Printf(":setting webhook %s for repo %s", webhookURL, req.Repo)
+		// webhookURL := os.Getenv("BACKEND_WEBHOOK_URL")
+		// webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
+		// log.Printf(":setting webhook %s for repo %s", webhookURL, req.Repo)
 
-		if webhookURL != "" {
-			err := github.SetupRepoWebhook(client, req.AccessToken, req.Repo, webhookURL, webhookSecret)
-			if err != nil {
-				log.Printf("[setup] webhook failed (critical): %v", err)
-			}
-		}
+		// if webhookURL != "" {
+		// 	err := github.SetupRepoWebhook(client, req.AccessToken, req.Repo, webhookURL, webhookSecret)
+		// 	if err != nil {
+		// 		log.Printf("[setup] webhook failed (critical): %v", err)
+		// 	}
+		// }
 
 		db.UpdateStatus(req.Repo, "FETCHING")
 		envelope := AnalysisEnvelope{

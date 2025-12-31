@@ -8,7 +8,7 @@ const kafka = new Kafka({
 });
 
 const producer = kafka.producer();
-let producerReady = false;
+let producerReady = true;
 
 async function ensureProducer() {
   if (!producerReady) {

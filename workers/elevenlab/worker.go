@@ -2,20 +2,22 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/joho/godotenv"
-	"sync"
 )
 
 type Config struct {
@@ -25,7 +27,11 @@ type Config struct {
 
 	ElevenKey   string
 	ElevenVoice string
-	OutputDir   string
+
+	TwilioSID   string
+	TwilioToken string
+	TwilioFrom  string
+	Number      string
 }
 
 func LoadConfig() Config {
@@ -37,7 +43,11 @@ func LoadConfig() Config {
 		Topic:       os.Getenv("KAFKA_TOPIC"),
 		ElevenKey:   os.Getenv("ELEVENLABS_API_KEY"),
 		ElevenVoice: os.Getenv("ELEVENLABS_VOICE_ID"),
-		OutputDir:   "./generation",
+		TwilioSID:   os.Getenv("TWILIO_SID"),
+		TwilioToken: os.Getenv("TWILIO_TOKEN"),
+		TwilioFrom:  os.Getenv("TWILIO_FROM"),
+
+		Number: os.Getenv("ALERT_PHONE_NUMBER"),
 	}
 }
 
@@ -47,14 +57,11 @@ type Job struct {
 	Priority string `json:"priority"`
 }
 
-
 func StartWorker(cfg Config) error {
 	c, err := kafka.NewConsumer(&kafka.ConfigMap{
-		"bootstrap.servers":   cfg.Brokers,
-		"group.id":            cfg.GroupID,
-		"auto.offset.reset":   "earliest",
-		"security.protocol":   "PLAINTEXT",
-		"api.version.request": true,
+		"bootstrap.servers": cfg.Brokers,
+		"group.id":          cfg.GroupID,
+		"auto.offset.reset": "earliest",
 	})
 	if err != nil {
 		return err
@@ -66,87 +73,77 @@ func StartWorker(cfg Config) error {
 	}
 
 	jobs := make(chan *kafka.Message, 100)
-
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
-	log.Println("elevenlabs worker started")
+	log.Println("worker started")
 
 	var wg sync.WaitGroup
 	const parallelism = 5
 
 	go func() {
 		defer close(jobs)
-
 		for {
 			select {
 			case <-sig:
-				log.Println("poll loop stopping")
 				return
 			default:
 				msg, err := c.ReadMessage(500 * time.Millisecond)
 				if err != nil {
+					if kafkaErr, ok := err.(kafka.Error); ok && kafkaErr.Code() == kafka.ErrTimedOut {
+						continue
+					}
+					log.Println("kafka error:", err)
 					continue
 				}
 				jobs <- msg
+
+				if err == nil {
+					jobs <- msg
+				}
 			}
 		}
 	}()
 
 	wg.Add(parallelism)
-	for i := 1; i <= parallelism; i++ {
+	for i := 0; i < parallelism; i++ {
 		go func(id int) {
 			defer wg.Done()
 			for msg := range jobs {
-				fmt.Printf("worker %d processing: %s\n", id, string(msg.Value))
-
 				var job Job
 				if err := json.Unmarshal(msg.Value, &job); err != nil {
-					log.Println("bad message:", err)
 					continue
 				}
-				HandleJob(cfg, job)
-				time.Sleep(2 * time.Second)
+				if err := HandleJob(cfg, job); err != nil {
+					log.Println("job failed:", err)
+				}
 			}
-			fmt.Printf("worker %d exiting\n", id)
 		}(i)
 	}
 
 	<-sig
-	log.Println("shutdown signal received")
-
 	wg.Wait()
-	log.Println("all workers stopped")
-
 	return nil
 }
 
 func HandleJob(cfg Config, job Job) error {
-	text := string(job.Message)
-
-	audio, err := GenerateSpeech(cfg, text)
+	audio, err := GenerateSpeech(cfg, job.Message)
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
+	audioURL, err := UploadAudio(job.EventID, audio)
+	if err != nil {
 		return err
 	}
 
-	out := filepath.Join(cfg.OutputDir, fmt.Sprintf("%s.mp3", job.EventID))
-	return os.WriteFile(out, audio, 0644)
+	return CallTwilioRaw(cfg.Number, audioURL)
 }
 
 func GenerateSpeech(cfg Config, text string) ([]byte, error) {
 	payload := map[string]any{
 		"text":     text,
 		"model_id": "eleven_multilingual_v2",
-		"voice_settings": map[string]any{
-		"stability":        0.25,
-		"similarity_boost": 0.7,
-		"style":            0.8,
-		"use_speaker_boost": true,
-	},
 	}
 
 	b, _ := json.Marshal(payload)
@@ -172,4 +169,68 @@ func GenerateSpeech(cfg Config, text string) ([]byte, error) {
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+func UploadAudio(eventId string, audio []byte) (string, error) {
+	payload := map[string]any{
+		"eventId":     eventId,
+		"audioBase64": base64.StdEncoding.EncodeToString(audio),
+	}
+
+	b, _ := json.Marshal(payload)
+
+	resp, err := http.Post(
+		"https://3000.vinitngr.xyz/api/call-alert/upload-audio",
+		"application/json",
+		bytes.NewReader(b),
+	)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var res struct {
+		AudioURL string `json:"audioUrl"`
+	}
+	json.NewDecoder(resp.Body).Decode(&res)
+
+	return res.AudioURL, nil
+}
+
+func CallTwilioRaw(to, audioURL string) error {
+	sid := os.Getenv("TWILIO_SID")
+	token := os.Getenv("TWILIO_TOKEN")
+	from := os.Getenv("TWILIO_FROM")
+
+	twiml := fmt.Sprintf(`<Response><Play>%s</Play></Response>`, audioURL)
+
+	form := url.Values{}
+	form.Set("To", to)
+	form.Set("From", from)
+	form.Set("Twiml", twiml)
+
+	req, err := http.NewRequest(
+		"POST",
+		fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Calls.json", sid),
+		strings.NewReader(form.Encode()),
+	)
+	if err != nil {
+		return err
+	}
+
+	req.SetBasicAuth(sid, token)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("twilio error: %s", b)
+	}
+
+	return nil
 }
