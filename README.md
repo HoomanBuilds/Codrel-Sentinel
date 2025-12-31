@@ -7,7 +7,7 @@
 > AI coding agents don’t fail because they can’t write code.
 > They fail because they don’t remember what broke before.
 
-**Codrel Sentinel** is a **repository-aware context engine** that gives AI coding agents and PR bots a **living memory of a codebase**—so they know **which files are fragile, what failed historically, and why** *before* they change anything.
+**Codrel Sentinel** is a **repository-aware context engine** that gives AI coding agents and PR bots a **living memory of a codebase** - so they know **which files are fragile, what failed historically, and why** *before* they change anything.
 
 Sentinel does **not replace agents**.
 It **feeds them the missing context** they need to act safely.
@@ -305,4 +305,5 @@ With Sentinel:
 ## One-Line Summary
 
 > **Codrel Sentinel gives AI agents and PR bots a living memory of a repository — so they know what’s fragile, what’s safe, and why, before they change anything.**
+
 
