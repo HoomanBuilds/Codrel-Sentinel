@@ -87,56 +87,73 @@ func buildPrompt(
 
 	riskJSON, _ := json.MarshalIndent(risk, "", "  ")
 	paths := filesToPaths(files)
-	return strings.TrimSpace(`
-SYSTEM ROLE:
-You are an automated Pull Request Risk Reviewer bot.
+	return strings.TrimSpace(
+"You are reviewing a pull request.\n\n" +
 
-You must:
-- Compare current code changes with historical failures
-- Warn only if evidence exists
-- Be concise, technical, and actionable
-- Never speculate or praise
+"Your goal:\n" +
+"- Identify risks only when supported by historical data or concrete evidence\n" +
+"- Focus on changed code paths\n" +
+"- Stay concise, neutral, and technical\n" +
+"- Avoid speculation, praise, or generic advice\n\n" +
 
-OUTPUT FORMAT (STRICT MARKDOWN):
+"Write the review comment as a human senior engineer would.\n\n" +
+"---\n\n" +
 
-### ⚠️ Risk Analysis Summary
-(one paragraph)
+"## Summary\n" +
+"Briefly describe whether this PR introduces risk. If none, say so clearly.\n\n" +
 
-### 🔍 Historical Signals
-(bullets only if any exist)
+"## Observations\n" +
+"List only findings that are directly supported by:\n" +
+"- Historical failures\n" +
+"- Similar past incidents\n" +
+"- Known regressions in the same files or patterns\n\n" +
+"If there are no such signals, omit this section.\n\n" +
 
-### 📌 Files of Interest
-(files + reason)
+"## Evidence\n" +
+"For each risk, show the exact code that matters.\n\n" +
 
-### ✅ Recommendation
-(clear actions or "No action needed")
+"**Before**\n" +
+"```go\n" +
+"<relevant previous code>\n" +
+"```\n\n" +
 
----
+"**After**\n" +
+"```go\n" +
+"<current changed code>\n" +
+"```\n\n" +
 
-PR METADATA:
-Repository: ` + repo + `
-PR Number: ` + itoa(prNumber) + `
+"Explain why the change is risky in one or two sentences.\n\n" +
 
-PR TITLE:
-` + title + `
+"## Suggested Action\n" +
+"- Concrete, minimal changes to reduce risk\n" +
+"- Or explicitly state: No action needed\n\n" +
 
-PR DESCRIPTION:
-` + truncate(body, 1500) + `
+"---\n\n" +
 
-CHANGED FILES:
-- ` + strings.Join(paths, "\n- ") + `
+"Context (do not restate unless relevant):\n\n" +
 
-CODE DIFFS:
-` + strings.Join(diffBlock, "\n\n") + `
+"Repository: " + repo + "\n" +
+"PR: #" + itoa(prNumber) + "\n" +
+"Title: " + title + "\n\n" +
 
-HISTORICAL RISK CONTEXT (FACTUAL JSON):
-` + string(riskJSON) + `
+"Description:\n" +
+truncate(body, 1500) + "\n\n" +
 
-DECISION RULES:
-- If historical failures match current files → warn
-- If risk < 0.3 and no history → say "No significant historical risk detected"
-- Never invent incidents
-`)
+"Changed Files:\n" +
+"- " + strings.Join(paths, "\n- ") + "\n\n" +
+
+"Diffs:\n" +
+strings.Join(diffBlock, "\n\n") + "\n\n" +
+
+"Historical Context (factual):\n" +
+string(riskJSON) + "\n\n" +
+
+"Rules:\n" +
+"- Warn only if historical evidence exists\n" +
+"- If risk score < 0.3 and no matches, state clearly that no significant risk was found\n" +
+"- Never invent incidents\n",
+)
+
 }
 
 func filesToPaths(files []ChangedFile) []string {
