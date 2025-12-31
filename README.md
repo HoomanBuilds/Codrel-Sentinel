@@ -1,208 +1,268 @@
+
+
 # Codrel Sentinel
 
-**Context & Safety Engine for AI Coding Agents**
+**A Context & Safety Engine for AI Coding Agents**
 
-Codrel Sentinel is a **repository-aware context engine** that helps AI agents and PR bots understand **what parts of a codebase are dangerous to change and why**.
+> AI coding agents don’t fail because they can’t write code.
+> They fail because they don’t remember what broke before.
 
-It builds **deep historical context** from a repository (PRs, CI failures, reverts, issues, workflow crashes), keeps that context **continuously up to date**, and exposes it to:
-
-* IDE AI agents (via MCP tools)
-* Pull request bots (SentinelBot)
+**Codrel Sentinel** is a **repository-aware context engine** that gives AI coding agents and PR bots a **living memory of a codebase**—so they know **which files are fragile, what failed historically, and why** *before* they change anything.
 
 Sentinel does **not replace agents**.
-It **feeds them the right context** so they don’t repeat past mistakes.
+It **feeds them the missing context** they need to act safely.
 
 ---
 
-## Core Idea
+## The Problem
 
-> AI agents fail because they don’t remember what broke before.
+Modern AI coding agents operate in a dangerous blind spot:
 
-Codrel Sentinel fixes this by:
+* They have **no memory of past failures**
+* They don’t know which files caused:
 
-1. **Analyzing repo history once**
-2. **Keeping it synced in real time**
-3. **Serving that context back to agents and bots**
+  * CI outages
+  * rollbacks
+  * security regressions
+  * production incidents
+* Every agent **re-discovers the same mistakes**
+* Context is lost between PRs, tools, and developers
 
-No guessing. No re-learning. No blind refactors.
+### Real Example
+
+An agent refactors `security.js`:
+
+* Looks clean
+* Passes unit tests
+* Breaks authentication in production
+
+Why?
+Because **that file has a history of subtle auth regressions**—but the agent never saw it.
+
+That knowledge exists in:
+
+* old PRs
+* reverted commits
+* CI failures
+* GitHub issues
+
+**But no AI agent sees it.**
 
 ---
 
-## High-Level Flow
+## The Insight
+
+> **Codebases already contain institutional memory — it’s just fragmented and unusable by AI.**
+
+Codrel Sentinel turns that scattered history into:
+
+* **durable, queryable context**
+* **file-level risk awareness**
+* **real-time safety signals** for agents and bots
+
+---
+
+## The Solution
+
+**Codrel Sentinel is a repository context engine that:**
+
+1. **Analyzes repository history once**
+2. **Keeps it continuously in sync**
+3. **Serves that context to AI agents and PR bots on demand**
+
+No re-learning.
+No guessing.
+No blind refactors.
+
+---
+
+## High-Level System Flow
 
 ```
-User connects repository
+Repository Connected
         ↓
-Historical repo analysis (async workers)
+Async Historical Analysis
         ↓
-File-level risk & context is built
+File-Level Risk & Context Built
         ↓
-Context is stored and kept in sync
+Context Stored + Continuously Updated
         ↓
-IDE agents & PR bots query Sentinel
+IDE Agents & PR Bots Query Sentinel
         ↓
-Agents act with full historical awareness
+Agents Act With Historical Awareness
 ```
 
 ---
 
 ## What Happens When a Repo Is Connected
 
-### 1. Initial Repository Processing (Async)
+### 1. Initial Repository Analysis (Async, Scalable)
 
-When a user connects a repository (GitHub today, GitLab later):
+When a repository is connected (GitHub today):
 
-Sentinel analyzes **all critical historical signals**:
+Sentinel asynchronously analyzes:
 
-* pull requests
-* reverted / rolled-back changes
-* workflow & CI crashes
-* issues linked to files
-* sensitive paths (security, auth, infra, payments)
+* Pull request history
+* Reverted and rolled-back changes
+* CI / workflow failures
+* Issues linked to files
+* Sensitive paths (auth, infra, payments, security)
 
-This processing is done by **workers**, not the API.
-
-### 2. Gemini-Powered Historical Analysis
-
-For each important file/module, workers use **Gemini** to:
-
-* analyze *why* failures happened
-* identify patterns (fragile files, risky changes)
-* associate failures with specific files
-
-This produces **compressed, durable context**, such as:
-
-* “Changes to `security.js` repeatedly caused auth regressions”
-* “This module has a history of CI failures after refactors”
-
-This context is stored once and reused everywhere.
+This work is handled by **background workers**, not blocking APIs.
 
 ---
 
-## Continuous Sync (Not One-Time)
+### 2. Historical Intelligence via Gemini
 
-Sentinel stays up to date.
+For each critical file or module, Sentinel uses **Gemini** to answer:
 
-Whenever these events happen:
+* *Why did this break before?*
+* *What patterns repeat here?*
+* *Which changes are historically risky?*
 
-* new PR merged / reverted
-* issue opened or closed
-* workflow fails
-* CI crashes
+This produces **compressed, durable context**, for example:
 
-They are:
+* “Changes to `security.js` frequently caused auth regressions”
+* “Refactors in `payment-service/` led to rollback PRs twice”
+* “This module is fragile during dependency upgrades”
 
-1. ingested via webhooks
-2. published to Confluent Kafka
-3. processed asynchronously by workers
-4. merged into existing repo context
+This context is:
 
-The repository’s “memory” keeps evolving.
+* computed once
+* stored centrally
+* reused by every agent and bot
+
+---
+
+## Continuous Sync (The Repository Has Memory)
+
+Sentinel is **not a one-time scan**.
+
+Whenever this happens:
+
+* PR merged or reverted
+* Issue opened or closed
+* CI or workflow fails
+
+The event is:
+
+1. Ingested via webhooks
+2. Published to **Confluent Kafka**
+3. Processed asynchronously by workers
+4. Merged into existing repository context
+
+The repository’s memory **evolves continuously**.
 
 ---
 
 ## How IDE Agents Use Sentinel (MCP)
 
-When an IDE AI agent edits code:
+When an AI agent edits code inside the IDE:
 
-Example:
+### Example
 
-> Agent modifies `security.js`
+Agent modifies `security.js`
 
-The agent calls an MCP tool like:
+The agent calls an MCP tool:
 
 ```
 check_file_safety
 ```
 
-Sentinel responds with **context**, not opinions:
+Sentinel responds with **facts**, not opinions:
 
-* this file’s historical failures
+* historical failures tied to the file
 * why it’s considered risky
-* what kind of changes broke it before
+* examples of past breakages
+* areas that should not be touched lightly
 
-No extra AI analysis is needed on Sentinel’s side.
-The agent already has everything it needs to reason correctly.
+**Sentinel does not reason for the agent.**
+It provides **ground truth context** so the agent reasons correctly.
 
 ---
 
-## How PR Bot (SentinelBot) Works
+## How SentinelBot Reviews Pull Requests
 
 When a pull request is opened or updated:
 
-1. SentinelBot sends:
+1. SentinelBot receives:
 
    * diff
-   * changed file list
+   * changed files
    * PR metadata
-2. Workers fetch **pre-built context** for those files
-3. Gemini is used (here) to:
+2. Workers fetch **pre-built historical context**
+3. Gemini analyzes the PR **in light of past failures**
+4. SentinelBot posts a PR comment explaining:
 
-   * analyze the PR *in light of past failures*
-4. SentinelBot posts a PR comment:
+* which files are fragile
+* what broke before
+* why this change is risky
+* what to watch out for
 
-   * explaining risk
-   * highlighting fragile files
-   * warning about past breakages
-
-This is **context-aware review**, not generic AI code review.
+This is **history-aware review**, not generic AI feedback.
 
 ---
 
-## Event & Worker Pipeline (Confluent)
+## Event & Worker Backbone (Confluent)
 
-Confluent Kafka is used as the backbone for all async work:
+**Confluent Kafka** powers all async processing:
 
-* repo indexing jobs
-* history sync jobs
-* PR analysis jobs
-* voice alert jobs
+* repository indexing
+* history synchronization
+* PR analysis
+* alert pipelines
 
-This allows:
+This enables:
 
 * non-blocking APIs
-* scalable processing
+* horizontal scaling
 * replayable analysis
+* failure isolation
 
 ---
 
-## Observability & Alerts (Datadog)
+## Observability & Reliability (Datadog)
 
-Sentinel emits **high-signal telemetry** from its internal services and pipelines, including:
+Sentinel emits high-signal telemetry for:
 
-* API request rates, latency, and error patterns
-* webhook ingestion reliability
-* worker execution status and retries
-* Kafka consumer lag and queue backlogs
-* AI request latency, failures, and quota-related errors
+* API latency and errors
+* webhook ingestion health
+* worker execution and retries
+* Kafka consumer lag
+* AI request failures and latency
 
-Datadog is used to:
+**Datadog** is used to:
 
-* monitor the health of Codrel Context and Codrel Sentinel services
-* surface anomalies across async pipelines and background workers
-* trigger alerts via webhooks when operational thresholds are breached
-This ensures the system remains reliable as repository analysis, agent interactions, and background processing scale.
+* monitor system health end-to-end
+* detect anomalies in async pipelines
+* trigger alerts when thresholds are breached
+
+This ensures Sentinel remains reliable as:
+
+* repositories grow
+* agents increase
+* background workloads scale
 
 ---
 
-## Voice Alerts (ElevenLabs)
+## Incident-Grade Voice Alerts (ElevenLabs)
 
-For **critical risk events** only:
+For **critical risk events only**:
 
 1. Datadog triggers a webhook
 2. Sentinel publishes a Kafka job
 3. A worker:
 
-   * uses Gemini to generate a short explanation
-   * uses ElevenLabs to synthesize voice
-4. A voice call / alert is triggered
+   * uses Gemini to generate a concise explanation
+   * uses **ElevenLabs** to synthesize voice
+4. A voice alert is triggered
 
-Voice is used for **incident-level signals**, not daily noise.
+Voice is reserved for **high-severity signals**, not noise.
 
 ---
 
 ## Architecture
-codrel sentinel architecture
+
 ![Codrel Sentinel Architecture](./assets/arch.png)
 
 ---
@@ -212,16 +272,16 @@ codrel sentinel architecture
 ### Sentinel **is**
 
 * a repository context engine
-* a memory system for AI agents
-* a safety layer for AI-driven changes
-* a bridge between repo history and agents
+* a long-term memory layer for AI agents
+* a safety system for AI-driven code changes
+* a bridge between repo history and automation
 
 ### Sentinel is **not**
 
 * a linter
-* a CI runner
+* a CI system
 * a code generator
-* a generic chatbot
+* a chatbot
 * a replacement for human review
 
 ---
@@ -230,18 +290,19 @@ codrel sentinel architecture
 
 Without Sentinel:
 
-* every agent relearns the same mistakes
-* risky files get refactored again and again
-* context is lost between PRs
+* agents repeat the same failures
+* risky files are refactored blindly
+* institutional knowledge is lost
 
 With Sentinel:
 
-* agents know what broke before
-* PR reviews are grounded in history
-* teams build institutional memory for AI
+* agents act with historical awareness
+* PR reviews are grounded in reality
+* teams build **persistent AI-safe memory**
 
 ---
 
 ## One-Line Summary
 
-> **Codrel Sentinel gives AI agents and PR bots a living memory of a repository — so they know which files are safe, which are fragile, and why.**
+> **Codrel Sentinel gives AI agents and PR bots a living memory of a repository — so they know what’s fragile, what’s safe, and why, before they change anything.**
+
