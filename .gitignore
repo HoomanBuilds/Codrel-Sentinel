@@ -18,3 +18,4 @@ infra/datadog-dashboard.json
 infra/datadog-monitors.json
 
 vertex.json
+*.json

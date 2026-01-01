@@ -13,29 +13,57 @@ export function log(tag: string, msg: string) {
 }
 
 const AnalysisSchema = z.object({
-  main_cause_file: z.string(),
-  cause_files: z.array(z.string()),
+  main_cause_file: z.string().default("unknown"),
 
-  critical_score: z.number().min(0).max(1),
-  critical_label: z.enum(["low", "medium", "high", "critical"]),
-  critical_reason: z.string(),
+  cause_files: z.array(z.string()).default([]),
 
-  root_reason: z.string(),
+  critical_score: z
+    .number()
+    .min(0)
+    .max(1)
+    .catch(0.5),
 
-  short_explanation: z.string(),
-  detailed_explanation: z.string(),
-  rag_summary: z.string(),
-  keywords: z.array(z.string()),
+  critical_label: z
+    .enum(["low", "medium", "high", "critical"])
+    .catch("medium"),
 
-  code_causing_issue: z.array(
-    z.object({ file: z.string(), snippet: z.string() })
-  ),
-  code_update_suggestion: z.array(
-    z.object({ file: z.string(), patch: z.string() })
-  ),
+  critical_reason: z.string().default(""),
 
-  confidence: z.number().min(0).max(1),
+  root_reason: z.string().default(""),
+
+  short_explanation: z.string().default(""),
+
+  detailed_explanation: z.string().default(""),
+
+  rag_summary: z.string().default(""),
+
+  keywords: z.array(z.string()).default([]),
+
+  code_causing_issue: z
+    .array(
+      z.object({
+        file: z.string().default("unknown"),
+        snippet: z.string().default(""),
+      })
+    )
+    .default([]),
+
+  code_update_suggestion: z
+    .array(
+      z.object({
+        file: z.string().default("unknown"),
+        patch: z.string().default(""),
+      })
+    )
+    .default([]),
+
+  confidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .catch(0.5),
 });
+
 
 type Analysis = z.infer<typeof AnalysisSchema>;
 

@@ -20,6 +20,7 @@ async function safeRun(name: string, fn: () => Promise<void>) {
   }
 }
 
+
 async function main() {
   initDB();
 

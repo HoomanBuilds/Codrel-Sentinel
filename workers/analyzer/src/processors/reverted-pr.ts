@@ -6,20 +6,29 @@ import { generateText } from "@/gemini/generate";
 import { FileRiskEvent } from "@/lib/db/record_file_event";
 
 const RevertAnalysisSchema = z.object({
-  summary: z.string(),
-  revert_cause: z.string(),
-  stability_risk: z.enum(["high", "medium", "low"]),
-  risk_category: z.enum([
-    "logic_error",
-    "performance",
-    "security",
-    "ui_regression",
-    "build_failure",
-  ]),
-  prevention_tip: z.string(),
-  primary_file: z.string(),
-  affected_files: z.array(z.string()),
+  summary: z.string().default(""),
+
+  revert_cause: z.string().default(""),
+
+  stability_risk: z.enum(["high", "medium", "low"]).catch("medium"),
+
+  risk_category: z
+    .enum([
+      "logic_error",
+      "performance",
+      "security",
+      "ui_regression",
+      "build_failure",
+    ])
+    .catch("logic_error"),
+
+  prevention_tip: z.string().default(""),
+
+  primary_file: z.string().default("unknown"),
+
+  affected_files: z.array(z.string()).default([]),
 });
+
 type RevertAnalysis = z.infer<typeof RevertAnalysisSchema>;
 
 const RevertJSONSchema = {
@@ -71,7 +80,6 @@ function log(tag: string, msg: string) {
   const time = new Date().toISOString().replace(/T/, " ").replace(/\..+/, "");
   console.log(`${time} [${tag}] ${msg}`);
 }
-
 
 export async function processRevertedPrs(
   repo: string,
@@ -157,7 +165,22 @@ ${item.pr.title}
         continue;
       }
 
-      log("revert-processor", `AI failure | PR=${item.pr.number} err=${e}`);
+      if (e instanceof z.ZodError) {
+        log(
+          "revert-processor",
+          `SCHEMA_MISMATCH | PR=${
+            item.pr.number
+          } field=${(e as any)?.errors[0]?.path.join(".")}`
+        );
+        continue;
+      }
+
+      log(
+        "revert-processor",
+        `AI failure | PR=${item.pr.number} err=${
+          e instanceof Error ? e.message : String(e)
+        }`
+      );
       continue;
     }
     if (!analysis) continue;

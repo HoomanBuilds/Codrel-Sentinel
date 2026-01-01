@@ -6,19 +6,26 @@ import { generateText } from "@/gemini/generate";
 import { FileRiskEvent } from "@/lib/db/record_file_event";
 
 const PrAnalysisSchema = z.object({
-  summary: z.string(),
-  rejection_reason: z.string(),
-  improvement_suggestion: z.string(),
-  risk_keywords: z.array(z.string()),
-  sentiment: z.enum(["neutral", "harsh", "constructive"]),
+  summary: z.string().min(1),
+
+  rejection_reason: z.string().min(1),
+
+  improvement_suggestion: z.string().min(1),
+
+  risk_keywords: z.array(z.string()).default([]),
+
+  sentiment: z.enum(["neutral", "harsh", "constructive"]).catch("neutral"),
+
   primary_file: z
     .string()
+    .default("unknown")
     .describe(
       "The single most responsible file for this rejection. Use 'unknown' if unclear."
     ),
 
   affected_files: z
     .array(z.string())
+    .default([])
     .describe(
       "List of files involved or impacted by this PR. Can be empty if unclear."
     ),
@@ -157,7 +164,18 @@ ${item.pr.body.slice(0, 500)}
         continue;
       }
 
+      if (e instanceof z.ZodError) {
+        log(
+          "pr-processor",
+          `SCHEMA_MISMATCH | PR=${
+            item.pr.number
+          } field=${(e as any)?.errors[0]?.path.join(".")}`
+        );
+        continue;
+      }
+
       log("pr-processor", `AI failure | PR=${item.pr.number} err=${e}`);
+
       continue;
     }
     if (!analysis) continue;

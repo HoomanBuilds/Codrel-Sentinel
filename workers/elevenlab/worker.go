@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/joho/godotenv"
@@ -39,8 +38,8 @@ func LoadConfig() Config {
 
 	return Config{
 		Brokers:     os.Getenv("KAFKA_BROKERS"),
-		GroupID:     os.Getenv("KAFKA_GROUP_ID"),
-		Topic:       os.Getenv("KAFKA_TOPIC"),
+		GroupID:     "elevenlab-worker",
+		Topic:       "codrel.index.jobs",
 		ElevenKey:   os.Getenv("ELEVENLABS_API_KEY"),
 		ElevenVoice: os.Getenv("ELEVENLABS_VOICE_ID"),
 		TwilioSID:   os.Getenv("TWILIO_SID"),
@@ -62,6 +61,7 @@ func StartWorker(cfg Config) error {
 		"bootstrap.servers": cfg.Brokers,
 		"group.id":          cfg.GroupID,
 		"auto.offset.reset": "earliest",
+		"log_level":         3,
 	})
 	if err != nil {
 		return err
@@ -88,19 +88,14 @@ func StartWorker(cfg Config) error {
 			case <-sig:
 				return
 			default:
-				msg, err := c.ReadMessage(500 * time.Millisecond)
+				msg, err := c.ReadMessage(-1)
 				if err != nil {
-					if kafkaErr, ok := err.(kafka.Error); ok && kafkaErr.Code() == kafka.ErrTimedOut {
+					if kafkaErr, ok := err.(kafka.Error); ok && !kafkaErr.IsFatal() {
 						continue
 					}
-					log.Println("kafka error:", err)
-					continue
+					log.Fatal("fatal kafka error:", err)
 				}
 				jobs <- msg
-
-				if err == nil {
-					jobs <- msg
-				}
 			}
 		}
 	}()

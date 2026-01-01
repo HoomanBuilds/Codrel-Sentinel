@@ -1,8 +1,5 @@
 module codrel-sentinel/workers/test
 
-go 1.21
+go 1.24
 
-require (
-	github.com/confluentinc/confluent-kafka-go/v2 v2.3.0
-	github.com/joho/godotenv v1.5.1
-)
+require github.com/joho/godotenv v1.5.1

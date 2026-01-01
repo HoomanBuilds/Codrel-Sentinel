@@ -26,6 +26,9 @@ worker-analyzer:
 worker-events:
 	cd workers/events && go run .
 
+worker-test:
+	cd workers/events && go run .
+
 worker-sentinelBot:
 	cd workers/sentinelBot && go run .
 

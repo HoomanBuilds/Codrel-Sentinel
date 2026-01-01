@@ -1,7 +1,7 @@
 package config
 
 const (
-	BootstrapServers = "localhost:9092"
+	BootstrapServers = "kafka:29092"
 
 	AnalysisTopic = "repo.analysis.ai"
 	RequestTopic  = "repo.analysis.request"

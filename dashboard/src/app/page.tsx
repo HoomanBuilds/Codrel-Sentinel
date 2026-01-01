@@ -15,6 +15,7 @@ export default function Home() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
+  console.log("Session:", process.env.NEXT_PUBLIC_TEST_ENV_VAR);
   useEffect(() => {
     if (session) router.push("/dashboard");
   }, [session, router]);
@@ -25,7 +26,6 @@ export default function Home() {
     <div className="min-h-screen bg-[#0f0f0f] text-neutral-200 font-mono flex items-center justify-center">
       <div className="w-full max-w-5xl px-6 py-24 space-y-16">
 
-        {/* Hero */}
         <section className="text-center space-y-4">
           <div className="text-5xl font-bold text-white tracking-tight">
             Codrel Sentinel
